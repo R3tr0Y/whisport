@@ -38,6 +38,37 @@ static const char *TAG = "main";
 static int64_t s_last_react_post_us = -REACT_POST_INTERVAL_US;
 static QueueHandle_t s_keys;
 
+/* 公告本地缓存（增量空响应不清屏；id 降序，最新在前） */
+#define ANN_CACHE_MAX 6
+static app_announcement_t s_items[ANN_CACHE_MAX];
+static size_t s_count = 0;
+
+static void cache_insert(const app_announcement_t *a) {
+  for (size_t i = 0; i < s_count; i++) {
+    if (s_items[i].id == a->id) {
+      s_items[i] = *a;
+      return;
+    }
+  }
+  size_t pos = s_count;
+  for (size_t i = 0; i < s_count; i++) {
+    if (s_items[i].id < a->id) {
+      pos = i;
+      break;
+    }
+  }
+  if (pos >= ANN_CACHE_MAX) return; /* 比现有 6 条都旧 */
+  size_t end = s_count < ANN_CACHE_MAX ? s_count : ANN_CACHE_MAX - 1;
+  memmove(&s_items[pos + 1], &s_items[pos], (end - pos) * sizeof(*a));
+  s_items[pos] = *a;
+  if (s_count < ANN_CACHE_MAX) s_count++;
+}
+
+static void render_announcements(void) {
+  app_announcement_list_t view = { .items = s_items, .count = s_count };
+  ui_show_announcements(&view, app_store_get_last_read());
+}
+
 typedef struct {
   bsp_btn_t btn;
   bsp_btn_ev_t ev;
@@ -227,20 +258,22 @@ static int do_sync_announcements(void) {
       a->created_at = (long)cJSON_GetNumberValue(cJSON_GetObjectItem(it, "created_at"));
       const char *t = cJSON_GetStringValue(cJSON_GetObjectItem(it, "title"));
       strlcpy(a->title, t ? t : "(no title)", sizeof(a->title));
+      const char *bd = cJSON_GetStringValue(cJSON_GetObjectItem(it, "body"));
+      strlcpy(a->body, bd ? bd : "", sizeof(a->body));
     }
     printf("公告 ×%u（最新 #%ld）\n", (unsigned)n, list.items[n - 1].id);
   } else {
     printf("无新公告\n");
   }
 
-  long last_read = app_store_get_last_read();
-  ui_show_announcements(&list, last_read);
+  /* 并入本地缓存后渲染：增量空响应不清屏（每次只渲染缓存里的最新 6 条） */
+  for (size_t i = 0; i < list.count; i++) cache_insert(&list.items[i]);
   free(list.items);
+  render_announcements();
 
-  /* 屏幕展示即已读（M1）；按键确认已读留给 M2 交互 */
+  /* 游标推进；已读标记由按键确认触发（见 input_task CLICK） */
   if (cJSON_IsNumber(cursor)) {
     app_store_set_cursor((int64_t)cursor->valuedouble);
-    app_store_set_last_read((int64_t)cursor->valuedouble);
   }
   cJSON_Delete(root);
   ui_set_syncing(false);
@@ -260,14 +293,42 @@ static void input_task(void *arg) {
   key_evt_t e;
   for (;;) {
     if (xQueueReceive(s_keys, &e, portMAX_DELAY) != pdTRUE) continue;
+
+    /* 详情视图内：UP/DN 滚动正文，OK 短按/双击/长按=返回 */
+    if (ui_detail_visible()) {
+      if (e.ev == BSP_BTN_CLICK || e.ev == BSP_BTN_DOUBLE) {
+        ui_hide_detail();
+      } else if (e.ev == BSP_BTN_PRESS) {
+        if (e.btn == BSP_BTN_UP) ui_scroll_detail(-1);
+        else if (e.btn == BSP_BTN_DOWN) ui_scroll_detail(1);
+      } else if (e.ev == BSP_BTN_LONG && e.btn == BSP_BTN_OK) {
+        ui_hide_detail(); /* M2：详情内长按改为 PTT */
+      }
+      continue;
+    }
+
+    /* 列表视图 */
     switch (e.ev) {
-      case BSP_BTN_LONG:
-        /* 长按：立即同步（M2 在通话/频道内为 PTT 说话） */
-        do_sync_announcements();
+      case BSP_BTN_PRESS:
+        if (e.btn == BSP_BTN_UP) ui_move_selection(-1);
+        else if (e.btn == BSP_BTN_DOWN) ui_move_selection(1);
         break;
-      case BSP_BTN_CLICK:
-      case BSP_BTN_DOUBLE:
-        /* M1 预留：列表滚动 / 返回 */
+      case BSP_BTN_CLICK: {
+        /* 确认键：打开详情（并标记已读） */
+        if (e.btn != BSP_BTN_OK) break;
+        int sel = ui_selected_index();
+        if (sel >= 0 && (size_t)sel < s_count) {
+          ui_show_detail(&s_items[sel]);
+          if (s_items[sel].id > app_store_get_last_read()) {
+            app_store_set_last_read(s_items[sel].id);
+            render_announcements();
+          }
+        }
+        break;
+      }
+      case BSP_BTN_LONG:
+        /* 长按 OK：立即同步（M2 在通话/频道内为 PTT 说话） */
+        if (e.btn == BSP_BTN_OK) do_sync_announcements();
         break;
       default:
         break;

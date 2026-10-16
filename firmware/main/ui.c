@@ -26,6 +26,13 @@ static lv_obj_t *s_net_label;     /* 左：WIFI / OFFLINE */
 static lv_obj_t *s_batt_label;
 static lv_obj_t *s_sync_label;
 static lv_obj_t *s_list;
+static lv_obj_t *s_detail;       /* 详情视图（覆盖列表区） */
+static lv_obj_t *s_d_title;
+static lv_obj_t *s_d_meta;
+static lv_obj_t *s_d_body_box;
+static lv_obj_t *s_d_body;
+static int s_sel = 0;            /* 列表高亮索引 */
+static int s_rendered = 0;       /* 当前渲染的卡片数 */
 static struct {
   lv_obj_t *card;
   lv_obj_t *dot;
@@ -140,6 +147,121 @@ void ui_init(void) {
     lv_obj_add_flag(s_cards[i].card, LV_OBJ_FLAG_HIDDEN);
   }
 
+  /* ---- 详情视图（覆盖列表区，默认隐藏）---- */
+  s_detail = lv_obj_create(scr);
+  lv_obj_remove_style_all(s_detail);
+  lv_obj_set_size(s_detail, 224, 252);
+  lv_obj_align(s_detail, LV_ALIGN_BOTTOM_MID, 0, -6);
+  lv_obj_set_style_bg_color(s_detail, lv_color_hex(C_CARD), 0);
+  lv_obj_set_style_bg_opa(s_detail, LV_OPA_COVER, 0); /* 不透明，避免与列表叠加 */
+  lv_obj_set_style_border_width(s_detail, 0, 0);
+  lv_obj_set_style_radius(s_detail, 10, 0);
+  lv_obj_set_style_pad_all(s_detail, 10, 0);
+  lv_obj_set_scroll_dir(s_detail, LV_DIR_NONE);
+
+  s_d_title = lv_label_create(s_detail);
+  lv_label_set_long_mode(s_d_title, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_d_title, 200);
+  lv_obj_set_style_text_color(s_d_title, lv_color_hex(C_TEXT), 0);
+  lv_obj_set_style_text_font(s_d_title, &lv_font_montserrat_14, 0);
+  lv_obj_align(s_d_title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  s_d_meta = lv_label_create(s_detail);
+  lv_obj_set_width(s_d_meta, 200);
+  lv_label_set_long_mode(s_d_meta, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_color(s_d_meta, lv_color_hex(C_ACCENT), 0);
+  lv_obj_set_style_text_font(s_d_meta, &lv_font_montserrat_14, 0);
+  lv_obj_align(s_d_meta, LV_ALIGN_TOP_LEFT, 0, 34);
+
+  s_d_body_box = lv_obj_create(s_detail);
+  lv_obj_remove_style_all(s_d_body_box);
+  lv_obj_set_size(s_d_body_box, 204, 168);
+  lv_obj_align(s_d_body_box, LV_ALIGN_TOP_LEFT, 0, 56);
+  lv_obj_set_scroll_dir(s_d_body_box, LV_DIR_VER);
+  lv_obj_set_style_pad_right(s_d_body_box, 4, 0);
+
+  s_d_body = lv_label_create(s_d_body_box);
+  lv_label_set_long_mode(s_d_body, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_d_body, 196);
+  lv_obj_set_style_text_color(s_d_body, lv_color_hex(C_TEXT), 0);
+  lv_obj_set_style_text_font(s_d_body, &lv_font_montserrat_14, 0);
+
+  lv_obj_t *hint = lv_label_create(s_detail);
+  lv_label_set_text(hint, "UP/DN scroll  OK back");
+  lv_obj_set_style_text_color(hint, lv_color_hex(C_MUTED), 0);
+  lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
+  lv_obj_align(hint, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+  lv_obj_add_flag(s_detail, LV_OBJ_FLAG_HIDDEN);
+
+  unlock();
+}
+
+/* ---- 列表选择 ---- */
+
+static void apply_highlight(void) {
+  for (int i = 0; i < CARD_MAX; i++) {
+    bool on = (i == s_sel) && (i < s_rendered);
+    lv_obj_set_style_border_width(s_cards[i].card, on ? 2 : 0, 0);
+    lv_obj_set_style_border_color(s_cards[i].card, lv_color_hex(C_ACCENT), 0);
+  }
+}
+
+void ui_move_selection(int dir) {
+  if (!with_lock(300)) return;
+  if (s_rendered <= 0) { unlock(); return; }
+  int next = s_sel + dir;
+  if (next < 0) next = 0;
+  if (next > s_rendered - 1) next = s_rendered - 1;
+  if (next != s_sel) {
+    s_sel = next;
+    apply_highlight();
+    lv_obj_scroll_to_view(s_cards[s_sel].card, LV_ANIM_ON);
+  }
+  unlock();
+}
+
+int ui_selected_index(void) {
+  return s_sel;
+}
+
+/* ---- 详情视图 ---- */
+
+void ui_show_detail(const app_announcement_t *a) {
+  if (!with_lock(500)) return;
+  lv_label_set_text(s_d_title, a->title);
+  char meta[64];
+  time_t t = (time_t)a->created_at;
+  struct tm tmv;
+  localtime_r(&t, &tmv);
+  strftime(meta, sizeof(meta), "%Y-%m-%d %H:%M", &tmv);
+  if (a->priority >= 2) strlcat(meta, "  URGENT", sizeof(meta));
+  else if (a->priority == 1) strlcat(meta, "  IMPORTANT", sizeof(meta));
+  lv_label_set_text(s_d_meta, meta);
+  lv_label_set_text(s_d_body, a->body[0] ? a->body : "(no content)");
+  lv_obj_scroll_to_y(s_d_body_box, 0, LV_ANIM_OFF);
+  lv_obj_add_flag(s_list, LV_OBJ_FLAG_HIDDEN); /* 隐藏列表，杜绝叠加 */
+  lv_obj_clear_flag(s_detail, LV_OBJ_FLAG_HIDDEN);
+  unlock();
+}
+
+void ui_hide_detail(void) {
+  if (!with_lock(300)) return;
+  lv_obj_add_flag(s_detail, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(s_list, LV_OBJ_FLAG_HIDDEN);
+  unlock();
+}
+
+bool ui_detail_visible(void) {
+  if (!with_lock(300)) return false;
+  bool v = !lv_obj_has_flag(s_detail, LV_OBJ_FLAG_HIDDEN);
+  unlock();
+  return v;
+}
+
+void ui_scroll_detail(int dir) {
+  if (!with_lock(300)) return;
+  lv_obj_scroll_by(s_d_body_box, 0, dir > 0 ? -44 : 44, LV_ANIM_ON);
   unlock();
 }
 
@@ -205,5 +327,9 @@ void ui_show_announcements(const app_announcement_list_t *list, long last_read) 
       lv_obj_add_flag(s_cards[i].card, LV_OBJ_FLAG_HIDDEN);
     }
   }
+
+  s_rendered = (int)n;
+  if (s_sel > s_rendered - 1) s_sel = s_rendered > 0 ? s_rendered - 1 : 0;
+  apply_highlight();
   unlock();
 }
