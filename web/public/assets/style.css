@@ -14,6 +14,9 @@
 
 * { box-sizing: border-box; }
 
+/* hidden 属性必须压过任何 display 声明（否则 display:flex 会让 hidden 失效） */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   font: 14px/1.6 system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
