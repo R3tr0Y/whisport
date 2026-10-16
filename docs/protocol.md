@@ -1,6 +1,6 @@
 # WSS 协议规范（M1 已实现子集 + M2 规划）
 
-端点：`wss://<worker域名>/ws/device`（由 PresenceDO 承载，全局单实例）
+端点：`wss://whisport.pages.dev/ws/device`（由 PresenceDO 承载，宿主为伴生 Worker whisport-realtime，全局单实例）
 
 控制消息 = JSON 文本帧；音频 = 二进制帧（M2）。
 

@@ -1,6 +1,6 @@
 # REST API 规范（M1 实现 · v1）
 
-基址：`https://<worker域名>`（本地 dev 为 `http://127.0.0.1:8787`）
+基址：`https://whisport.pages.dev`（Cloudflare Pages，国内可达；本地 dev 为 `http://127.0.0.1:8788`）
 
 **通用约定**
 

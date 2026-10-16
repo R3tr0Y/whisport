@@ -2,9 +2,9 @@ menu "Whisport"
 
     config WS_SERVER_URL
         string "服务器基础 URL"
-        default "https://ai-passport-board.your-subdomain.workers.dev"
+        default "https://whisport.pages.dev"
         help
-            Cloudflare Worker 部署地址（末尾不带斜杠）。
+            Cloudflare Pages 部署地址（末尾不带斜杠）。pages.dev 域名国内可达；勿用 workers.dev。
 
     config WS_WIFI_SSID
         string "Wi-Fi SSID"

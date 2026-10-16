@@ -1,62 +1,76 @@
-# 部署指南（Cloudflare Free Plan）
+# 部署指南（Cloudflare Pages · pages.dev）
+
+> 为什么是 Pages：`workers.dev` 域名在国内无法正常访问，`pages.dev` 可达。静态后台 + Functions API 同源部署于 `https://whisport.pages.dev`；Durable Objects 由伴生 Worker `whisport-realtime` 承载（Pages 不能定义 DO 类），经内部服务绑定访问，无公网路由——全部用户流量走 pages.dev。
+
+## 架构一览
+
+```
+浏览器 / 设备 ──HTTPS──▶ whisport.pages.dev
+                         ├─ public/      静态管理后台
+                         ├─ functions/   REST API（web/core 路由器）
+                         │    └─ bindings: DB(D1) / CACHE(KV) / PRESENCE(DO→whisport-realtime)
+whisport-realtime ────────┘  仅承载 PresenceDO（M2 加 RoomDO），workers_dev=false
+清理任务：惰性触发（whoami 时检查 KV 水位，1h 节流）—— Pages 无 Cron Triggers
+```
 
 ## 首次部署（约 10 分钟）
 
 ```bash
-cd worker
+cd web
 npx wrangler login
 
-# 1. 创建资源
-npx wrangler d1 create ai-passport-board          # 回填 database_id 到 wrangler.jsonc
-npx wrangler kv namespace create CACHE            # 回填 id 到 wrangler.jsonc
+# 1. 创建资源（D1 / KV；创建后回填 wrangler.toml 的 database_id 与 id）
+npx wrangler d1 create ai-passport-board
+npx wrangler kv namespace create CACHE
 
-# 2. 设置生产密钥（secret 优先于 vars，绝不入库）
-openssl rand -hex 32                              # 生成 SECRET_ENC_KEY
-npx wrangler secret put ADMIN_TOKEN               # 管理后台令牌，自拟强随机值
-npx wrangler secret put SECRET_ENC_KEY            # 粘贴上面生成的 64 hex
+# 2. 伴生 Worker（DO 宿主）—— 必须先于 Pages 部署
+npx wrangler deploy --config ../realtime/wrangler.toml
 
-# 3. 建表 + 部署
+# 3. Pages 项目 + 部署
+npx wrangler pages project create whisport --production-branch main
+npx wrangler pages deploy                     # → https://whisport.pages.dev
+
+# 4. 生产密钥（wrangler.toml 中不得放同名 vars）
+openssl rand -hex 24                          # ADMIN_TOKEN（管理后台令牌，记入密码管理器）
+npx wrangler pages secret put ADMIN_TOKEN --project-name whisport
+openssl rand -hex 32                          # SECRET_ENC_KEY（64 hex，加密 device_secret 用）
+npx wrangler pages secret put SECRET_ENC_KEY --project-name whisport
+
+# 5. 建表 + 线上冒烟
 npx wrangler d1 migrations apply ai-passport-board --remote
-npx wrangler deploy
+ADMIN_TOKEN=<你的令牌> node scripts/smoke.mjs https://whisport.pages.dev
 ```
 
-部署完成后：
-
-- 管理后台：`https://ai-passport-board.<你的子域>.workers.dev/`
-- 设备 API 基址：同域名（固件 menuconfig → Whisport → WS_SERVER_URL）
-
-> ⚠️ `SECRET_ENC_KEY` 一旦设置不可更换（所有 device_secret 将无法解密）；换钥需全体设备重新认领。
+> ⚠️ `SECRET_ENC_KEY` 一旦设置不可更换（所有 device_secret 将无法解密）；换钥需全体设备重新认领。密钥存于仓库外安全处（本次开发已生成一份，位置见交接消息）。
 
 ## 本地开发
 
 ```bash
-cd worker
+cd web
 npm install
 npx wrangler d1 migrations apply ai-passport-board --local
-npx wrangler dev                                  # http://127.0.0.1:8787
-node scripts/smoke.mjs                            # M1 全链路冒烟（9 项）
+npx wrangler pages dev                       # http://127.0.0.1:8788（静态+functions 同源）
+node scripts/smoke.mjs http://127.0.0.1:8788
 
-npm test                                          # 19 项集成测试（vitest + workers 运行时）
+npm test                                     # 19 项集成测试
 npm run typecheck
 ```
 
-本地默认管理令牌为 `dev-admin-token`（wrangler.jsonc `vars`，仅开发用）。
-
-## 静态后台独立部署到 Pages（可选）
-
-后台是零构建静态站点，也可不经 Worker 直接发布：
-
-```bash
-npx wrangler pages deploy web/public --project-name whisport-admin
-```
-
-注意：独立部署后后台与 API 跨域，需在 Worker 补 CORS 头（当前按同源部署设计，未开 CORS）。
+本地密钥放 `web/.dev.vars`（参考 `.dev.vars.example`；已 gitignore）。
 
 ## 验收清单（M1）
 
-- [x] 管理后台登录、生成配对码
+- [x] 管理后台登录、生成配对码（https://whisport.pages.dev）
 - [x] 设备凭码认领 → 密钥写入 NVS → 刷机后免配置恢复（同 MAC 幂等）
 - [x] 公告三级可见性 + 游标增量拉取 + 过期隐藏
 - [x] 重新激活：设备请求 → 后台批准 → 轮询一次性取回新密钥、旧密钥失效
-- [x] 审计全量可查；Cron 清理生效
+- [x] 审计全量可查；惰性清理生效
+- [x] 线上冒烟 9/9（2026-10-16，pages.dev）
 - [ ] 真机（ESP32-C3）联测 —— 固件骨架尚未编译（无本地 ESP-IDF 环境）
+
+## 部署拓扑备注
+
+- **删除旧部署**：重构前的 Worker `ai-passport-board`（workers.dev）已删除；D1/KV 资源沿用。
+- **DO 迁移**：PresenceDO 无持久状态，换宿主 Worker 无数据迁移需求。
+- **Bot 防护**：若账号开了 Bot Fight Mode，匿名设备 POST 可能被挑战页拦截（冒烟脚本曾中招）；建议关闭或为 API 路径加 WAF 例外。设备端已带 User-Agent。
+- **可选 Cron Worker**：若希望无管理访问时也清理，可另建极小 Worker 挂 Cron Trigger，定时 POST 一个受保护端点；当前惰性方案对玩具规模足够。

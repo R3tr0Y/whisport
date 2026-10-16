@@ -8,17 +8,20 @@
 ## 仓库结构
 
 ```
-worker/     Cloudflare Worker：REST API + PresenceDO + Cron + 管理后台托管（19 项集成测试）
-web/        管理后台 SPA（零构建原生 ES 模块，随 Worker 同源部署）
+web/        Cloudflare Pages 项目（whisport.pages.dev）：
+            public/ 静态管理后台 · functions/ REST API 适配层 · core/ 服务端逻辑 · tests/ 19 项集成测试
+realtime/   伴生 Worker whisport-realtime：承载 PresenceDO（M2 加 RoomDO），无公网路由
 firmware/   ESP-IDF 固件（M1 骨架：身份链路 + 公告拉取；音频对讲属 M2）
 docs/       API 规范 · WSS 协议 · 部署指南 · 决策记录
 ```
+
+> 域名说明：`workers.dev` 国内不可达，全部用户流量走 **pages.dev**；Durable Objects 因 Pages 限制由伴生 Worker 承载（决策 D12/D13）。
 
 ## 当前状态（2026-10）
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
-| **M1** | 身份链路（MAC 幂等注册/配对码认领/刷机恢复/重新激活审批）+ 公告板（三级可见性/提示-拉取/游标）+ 管理后台 | ✅ 后端与后台完成并测试；固件骨架完成（待真机编译联调） |
+| **M1** | 身份链路（MAC 幂等注册/配对码认领/刷机恢复/重新激活审批）+ 公告板（三级可见性/提示-拉取/游标）+ 管理后台 | ✅ 已上线 https://whisport.pages.dev（线上冒烟 9/9）；固件骨架完成（待真机编译联调） |
 | M2 | Presence 信令 + RoomDO + 1:1 呼叫 + PTT 语音 | 规划定稿（docs/protocol.md），未开工 |
 | M3 | 频道 / PIN 准入 / 防爆破（表结构已就位） | 未开工 |
 | M4 | 后台打磨 + 全链路压测 | 未开工 |
@@ -26,15 +29,15 @@ docs/       API 规范 · WSS 协议 · 部署指南 · 决策记录
 ## 快速开始
 
 ```bash
-# 后端（本地）
-cd worker && npm install
+# 后端（本地，静态+API 同源）
+cd web && npm install
 npx wrangler d1 migrations apply ai-passport-board --local
-npx wrangler dev                       # 管理后台 + API → http://127.0.0.1:8787
-node scripts/smoke.mjs                 # 全链路冒烟
-npm test                               # 19 项集成测试
+npx wrangler pages dev                  # 管理后台 + API → http://127.0.0.1:8788
+node scripts/smoke.mjs http://127.0.0.1:8788
+npm test                                # 19 项集成测试
 
-# 生产部署
-# 见 docs/deployment.md（D1/KV 创建、secrets、migrations、deploy）
+# 生产部署（含 realtime 伴生 Worker、secrets、线上冒烟）
+# 见 docs/deployment.md
 
 # 固件
 cd firmware && idf.py set-target esp32c3 && idf.py menuconfig && idf.py build flash monitor

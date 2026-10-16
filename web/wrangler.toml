@@ -18,6 +18,8 @@ id = "df4cde86076e4319b003dca4494ebfea"
 [[durable_objects.bindings]]
 name = "PRESENCE"
 class_name = "PresenceDO"
+# Pages 不能定义 DO 类：由伴生 Worker whisport-realtime 承载（internal 绑定，无公网路由）
+script_name = "whisport-realtime"
 
 # Pages 不支持 Cron Triggers → 清理任务为惰性触发（core/cron.ts maybeCleanup，
 # 挂在管理后台 whoami），scheduled 导出保留给可选的独立 cron worker。

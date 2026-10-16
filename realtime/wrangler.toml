@@ -1,0 +1,13 @@
+# 伴生 Worker：仅承载 Durable Objects，供 Pages 服务绑定，无公网路由
+name = "whisport-realtime"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+workers_dev = false
+
+[[durable_objects.bindings]]
+name = "PRESENCE"
+class_name = "PresenceDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PresenceDO"]

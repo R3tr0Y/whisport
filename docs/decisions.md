@@ -15,6 +15,9 @@
 | D9 | 设备限速/防重放用 KV 尽力而为（最终一致），不可用时放行 | 玩具规模下可用性优先；KV 故障不应打断正常设备 | 极小概率重复计数或漏放行 |
 | D10 | 固件 `storage` 独立 NVS 分区存 L2 凭证，缺失时自动回退默认 nvs 分区 | 与第三方分区表兼容；正式分区表见 partitions.csv | 无 |
 | D11 | **8MB flash 预算重排**：双 OTA 各 2.5MB、storage 256KB、assets(SPIFFS) 2.625MB 预留 M4 字库 | 原草案 OTA 各 3MB 对 8MB 偏肥；app 峰值预估 <2.2MB，余量留给 LVGL 中文资产而非 app | OTA 镜像上限 2.5MB；超限时按 README 降级链处理 |
+| D12 | **部署形态改为 Cloudflare Pages（pages.dev）**，取代 D1 的统一 Worker | `workers.dev` 域名国内不可达；`pages.dev` 可达。静态+functions 同源、D1/KV 绑定不变 | 用户/设备全部走 `https://whisport.pages.dev`；旧 Worker `ai-passport-board` 已删除 |
+| D13 | **PresenceDO 宿主为伴生 Worker `whisport-realtime`**（workers_dev=false，无公网路由） | Pages 不能定义 DO 类，绑定必须 `script_name` 指向独立 Worker；实现代码仍在 `web/core/presence.ts` 单一事实源，两端共享 | M2 的 RoomDO 也放入该 Worker；DO 无持久状态，迁移零成本 |
+| D14 | **Cron → 惰性清理**（whoami 触发，KV 水位 1h 节流） | Pages 不支持 Cron Triggers；玩具规模下无管理访问即无垃圾产生 | 闲置期间不清理但无影响；`scheduled` 导出保留给可选 cron worker |
 
 ## 测试基建备注
 

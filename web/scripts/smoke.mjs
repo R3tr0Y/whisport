@@ -58,7 +58,7 @@ check("生成配对码", /^\d{6}$/.test(pc.code), JSON.stringify(pc));
 
 const claim = await fetch(BASE + "/api/devices/claim", {
   method: "POST",
-  headers: { "content-type": "application/json", "cf-connecting-ip": "9.9.9.9" },
+  headers: { "content-type": "application/json", "user-agent": "whisport-smoke/1.0" },
   body: JSON.stringify({ pairing_code: pc.code, mac, label: "冒烟工牌" }),
 });
 const { device_id, device_secret } = await claim.json();
