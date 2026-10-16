@@ -1,7 +1,17 @@
-# Whisport: 8MB flash，双 OTA + 独立应用数据分区（L2 凭证落点）
-# Name,       Type, SubType, Offset,   Size,     Flags
-nvs,          data, nvs,     0x9000,   0x5000,
-otadata,      data, ota,     0xe000,   0x2000,
-ota_0,        app,  ota_0,   0x10000,  0x300000,
-ota_1,        app,  ota_1,   0x310000, 0x300000,
-storage,      data, nvs,     0x610000, 0x1F0000,
+# Whisport: 8MB flash 预算（规划 §7.3 —— 空间紧张，所有分区按需分配）
+#
+# Name,   Type, SubType, Offset,   Size,      用途
+# nvs      20KB    Wi-Fi 校准等系统数据（IDF 默认）
+# otadata  8KB     OTA 启动选择
+# ota_0/1  各2.5MB 双 OTA（语音固件 + Opus + LVGL 预估 <2.2MB，留 300KB 余量）
+# storage  256KB   L2 凭证/公告游标/已读标记（NVS，实际用量 <10KB）
+# assets   2.625MB M4 预留：LVGL 中文字库/图标（SPIFFS，可后挂）
+# 尾部 64KB 对齐余量
+#
+# app 分区超 2.5MB 时的降级方案：弃双 OTA 换单 app 5.1MB（文档见 firmware/README）
+nvs,      data, nvs,     0x9000,   0x5000,
+otadata,  data, ota,     0xe000,   0x2000,
+ota_0,    app,  ota_0,   0x10000,  0x280000,
+ota_1,    app,  ota_1,   0x290000, 0x280000,
+storage,  data, nvs,     0x510000, 0x40000,
+assets,   data, spiffs,  0x550000, 0x2A0000,

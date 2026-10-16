@@ -14,6 +14,7 @@
 | D8 | `last_seen` 写入按 60s 节流 | 避免每次轮询都写 D1 | 在线时间精度 1 分钟 |
 | D9 | 设备限速/防重放用 KV 尽力而为（最终一致），不可用时放行 | 玩具规模下可用性优先；KV 故障不应打断正常设备 | 极小概率重复计数或漏放行 |
 | D10 | 固件 `storage` 独立 NVS 分区存 L2 凭证，缺失时自动回退默认 nvs 分区 | 与第三方分区表兼容；正式分区表见 partitions.csv | 无 |
+| D11 | **8MB flash 预算重排**：双 OTA 各 2.5MB、storage 256KB、assets(SPIFFS) 2.625MB 预留 M4 字库 | 原草案 OTA 各 3MB 对 8MB 偏肥；app 峰值预估 <2.2MB，余量留给 LVGL 中文资产而非 app | OTA 镜像上限 2.5MB；超限时按 README 降级链处理 |
 
 ## 测试基建备注
 

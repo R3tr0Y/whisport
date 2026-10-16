@@ -1,10 +1,17 @@
-# ESP32-C3 / 8MB flash
+# ==== 目标板 ====
 CONFIG_IDF_TARGET="esp32c3"
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 
-# TLS 证书捆绑（校验 Cloudflare 证书）
+# ==== 体积优化（8MB flash 预算，规划 §7.3）====
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y          # -Os，flash 紧张优先尺寸
+CONFIG_NEWLIB_NANO_FORMAT=y                  # 精简 printf 族
+CONFIG_BT_ENABLED=n                          # 本期不用 BLE，省 flash+RAM
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y       # 不落 coredump 分区
+
+# TLS：仅客户端；证书捆绑 full 便于换环境（可换自定义 Cloudflare 根 CA 省 ~40KB，见 README）
+CONFIG_MBEDTLS_TLS_CLIENT_ONLY=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 # 无 PSRAM：压缩 TLS 缓冲（规划 §7.3）

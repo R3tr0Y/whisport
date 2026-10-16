@@ -14,6 +14,24 @@ AI Passport（ESP32-C3）公告板 + PTT 对讲固件。当前为 **M1 里程碑
 | `app_api` | HTTPS 客户端 + 设备签名头 + cJSON 解析 | §7.1 proto(REST 部分) |
 | `app_ui` | 控制台 UI（`pair`/`status`/`sync` 命令），LVGL 屏幕界面待接入 BSP 后实现 | §7.1 ui |
 
+## 8MB flash 预算（规划 §7.3）
+
+| 分区 | 大小 | 用途 |
+|---|---|---|
+| bootloader + 分区表 | 64KB | 系统 |
+| nvs | 20KB | Wi-Fi 校准（IDF 默认） |
+| otadata | 8KB | OTA 选择 |
+| ota_0 / ota_1 | 各 2.5MB | 双 OTA（语音+Opus+LVGL 预估 <2.2MB，300KB 余量） |
+| storage | 256KB | L2 凭证/游标/已读（NVS，实际 <10KB） |
+| assets | 2.625MB | M4 预留：LVGL 中文字库/图标（SPIFFS） |
+
+体积红线与手段（`idf.py size` 监控）：
+
+- `-Os` 编译、newlib-nano、BLE 关闭、TLS 仅客户端（见 sdkconfig.defaults）
+- TLS 证书 full bundle ~40KB → 量产可换成只含 Cloudflare 根 CA 的自定义 bundle（` esp_crt_bundle_set`）
+- app 超 2.5MB 时依次：裁 LVGL 字库（仅内置常用汉字）→ 降 Opus 码率 → 极端情况弃双 OTA 换单 app 5.1MB
+- 无 PSRAM：TLS 收发缓冲压至 4KB，HTTP 响应体上限 64KB（app_api.c）
+
 ## 构建
 
 ```bash
