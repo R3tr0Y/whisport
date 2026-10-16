@@ -562,6 +562,24 @@ static int cmd_prov(int argc, char **argv) {
   return 0;
 }
 
+/* 开发/测试用：打印当前配网 PIN */
+static int cmd_pin(int argc, char **argv) {
+  (void)argc; (void)argv;
+  printf("配网 PIN: %s\n", net_prov_pin());
+  return 0;
+}
+
+/* 开发/测试用：直接设置 Wi-Fi 凭据（正式用户走配网页） */
+static int cmd_wifi(int argc, char **argv) {
+  if (argc < 2) {
+    printf("用法: wifi <ssid> [password]\n");
+    return 1;
+  }
+  esp_err_t err = app_net_start_sta_creds(argv[1], argc > 2 ? argv[2] : "");
+  printf(err == ESP_OK ? "已保存并连接\n" : "失败: %s\n", esp_err_to_name(err));
+  return err == ESP_OK ? 0 : 1;
+}
+
 static void console_init(void) {
   esp_console_repl_config_t repl_cfg = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
   repl_cfg.prompt = "whisport> ";
@@ -579,6 +597,8 @@ static void console_init(void) {
       { .command = "sync", .help = "立即拉取公告", .func = cmd_sync },
       { .command = "status", .help = "查看设备状态", .func = cmd_status },
       { .command = "prov", .help = "清除 Wi-Fi 凭据并重启（进入配网模式）", .func = cmd_prov },
+      { .command = "wifi", .help = "wifi <ssid> [密码] — 直接设置 Wi-Fi（开发/恢复用）", .func = cmd_wifi },
+      { .command = "pin", .help = "打印当前配网 PIN", .func = cmd_pin },
   };
   for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
     esp_console_cmd_register(&cmds[i]);
@@ -617,6 +637,7 @@ void app_main(void) {
   console_init();
 
   ESP_ERROR_CHECK(app_net_init());
+  ESP_ERROR_CHECK(net_prov_init()); /* 先于界面分支：PIN 需先生成（设置屏会显示） */
 
   if (app_net_has_creds()) {
     show_menu();
@@ -628,6 +649,5 @@ void app_main(void) {
     show_setup_screen();
     ESP_LOGI(TAG, "no wifi creds -> provisioning ap %s", app_net_ap_ssid());
   }
-  ESP_ERROR_CHECK(net_prov_init());
   xTaskCreate(sync_task, "sync", 8192, NULL, 5, NULL);
 }

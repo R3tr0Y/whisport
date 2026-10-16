@@ -255,7 +255,7 @@ esp_err_t net_prov_init(void) {
   for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
     httpd_register_uri_handler(s_httpd, &routes[i]);
   }
-  ESP_LOGI(TAG, "config portal ready (%s)", s_ap_mode ? "ap mode" : "sta mode");
+  ESP_LOGI(TAG, "config portal ready (%s, pin=%s)", s_ap_mode ? "ap mode" : "sta mode", s_pin);
   return ESP_OK;
 }
 

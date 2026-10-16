@@ -85,12 +85,12 @@ bool app_net_has_creds(void) {
   return app_store_get_wifi(ssid, sizeof(ssid), pass, sizeof(pass));
 }
 
-static void apply_sta_config(const char *ssid, const char *pass) {
+static esp_err_t apply_sta_config(const char *ssid, const char *pass) {
   wifi_config_t wifi = {0};
   strlcpy((char *)wifi.sta.ssid, ssid, sizeof(wifi.sta.ssid));
   strlcpy((char *)wifi.sta.password, pass ? pass : "", sizeof(wifi.sta.password));
   wifi.sta.threshold.authmode = WIFI_AUTH_OPEN;
-  ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi));
+  return esp_wifi_set_config(WIFI_IF_STA, &wifi);
 }
 
 esp_err_t app_net_start_sta(void) {
@@ -98,28 +98,34 @@ esp_err_t app_net_start_sta(void) {
   if (!app_store_get_wifi(ssid, sizeof(ssid), pass, sizeof(pass))) {
     return ESP_ERR_NOT_FOUND;
   }
-  apply_sta_config(ssid, pass);
+  ESP_RETURN_ON_ERROR(apply_sta_config(ssid, pass), TAG, "sta config");
 
   wifi_mode_t mode = s_ap_active ? WIFI_MODE_APSTA : WIFI_MODE_STA;
-  ESP_ERROR_CHECK(esp_wifi_set_mode(mode));
-  esp_err_t err = esp_wifi_start();
-  if (err == ESP_ERR_WIFI_NOT_STARTED || err == ESP_OK) {
-    esp_wifi_connect();
-  }
+  ESP_RETURN_ON_ERROR(esp_wifi_set_mode(mode), TAG, "set mode");
+  esp_wifi_start(); /* 已启动返回错误，忽略 */
+  esp_wifi_connect();
   ESP_LOGI(TAG, "sta started, connecting to \"%s\"", ssid);
   return ESP_OK;
 }
 
+/**
+ * 保存凭据并（重）连（配网页/console 调用）。
+ * 注意：驱动处于"连接中"时不能 set_config（否则返回错误）——先 disconnect 并等待；
+ * 全程不得用 ESP_ERROR_CHECK（网络调用失败会 abort 重启，曾致配网页改 Wi-Fi 即崩）。
+ */
 esp_err_t app_net_start_sta_creds(const char *ssid, const char *pass) {
   ESP_RETURN_ON_ERROR(app_store_set_wifi(ssid, pass ? pass : ""), TAG, "save wifi");
+
   esp_wifi_disconnect();
-  apply_sta_config(ssid, pass);
+  vTaskDelay(pdMS_TO_TICKS(150));
+
   wifi_mode_t mode = s_ap_active ? WIFI_MODE_APSTA : WIFI_MODE_STA;
-  ESP_ERROR_CHECK(esp_wifi_set_mode(mode));
-  esp_err_t err = esp_wifi_start();
-  if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
-    // 已在运行属正常路径（重启连接即可）
-  }
+  esp_err_t err = esp_wifi_set_mode(mode);
+  if (err != ESP_OK) return err;
+  err = apply_sta_config(ssid, pass);
+  if (err != ESP_OK) return err;
+
+  esp_wifi_start(); /* 已在运行属正常路径 */
   xEventGroupClearBits(s_events, GOT_IP_BIT);
   esp_wifi_connect();
   ESP_LOGI(TAG, "sta reconfigured -> \"%s\"", ssid);
@@ -164,8 +170,8 @@ esp_err_t app_net_start_ap(const char *ssid, const char *pass) {
     ap.ap.authmode = WIFI_AUTH_OPEN;
   }
 
-  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
-  ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
+  ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "set mode");
+  ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &ap), TAG, "ap config");
   esp_err_t err = esp_wifi_start();
   if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
     return err;
