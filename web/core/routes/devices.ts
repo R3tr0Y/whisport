@@ -60,9 +60,10 @@ export async function claim(ctx: Ctx): Promise<Response> {
  * body: { mac }
  */
 export async function reactivateRequest(ctx: Ctx): Promise<Response> {
-  await rateLimit(ctx.env, ctx.req, "reactivate", 10, 3600);
   const body = await readJson<{ mac?: string }>(ctx.req);
   const mac = normalizeMac(requireString(body.mac, "mac", 20));
+  // 按 MAC 限速而非 IP：家用 NAT 下多设备共享公网 IP，按 IP 会互相挤兑额度
+  await rateLimit(ctx.env, ctx.req, `reactivate:${mac}`, 30, 3600);
   const deviceId = await deviceIdFromMac(mac);
   const now = nowSec();
 
@@ -107,8 +108,8 @@ export async function reactivateRequest(ctx: Ctx): Promise<Response> {
  * GET /api/devices/reactivate?mac= — 匿名轮询；审批通过后在此一次性取回新 secret
  */
 export async function reactivatePoll(ctx: Ctx): Promise<Response> {
-  await rateLimit(ctx.env, ctx.req, "reactivate", 60, 3600);
   const mac = normalizeMac(requireString(ctx.url.searchParams.get("mac") ?? "", "mac", 20));
+  await rateLimit(ctx.env, ctx.req, `reactivate-poll:${mac}`, 60, 3600);
   const deviceId = await deviceIdFromMac(mac);
   const now = nowSec();
 

@@ -46,16 +46,25 @@ static esp_err_t do_request(const char *url, const char *method, const char *jso
   }
   size_t len = 0;
 
-  if (json_body) {
-    esp_http_client_set_post_field(http, json_body, strlen(json_body));
-  }
-
-  esp_err_t err = esp_http_client_open(http, json_body ? strlen(json_body) : 0);
+  size_t body_len = json_body ? strlen(json_body) : 0;
+  esp_err_t err = esp_http_client_open(http, body_len);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "open failed: %s url=%s", esp_err_to_name(err), url);
     free(buf);
     esp_http_client_cleanup(http);
     return err;
+  }
+
+  /* 手动 open 流程必须显式写入 body（set_post_field 仅 perform 流程自动生效） */
+  if (body_len > 0) {
+    int w = esp_http_client_write(http, json_body, body_len);
+    if (w < 0 || (size_t)w != body_len) {
+      ESP_LOGE(TAG, "body write failed (%d/%u) url=%s", w, (unsigned)body_len, url);
+      free(buf);
+      esp_http_client_close(http);
+      esp_http_client_cleanup(http);
+      return ESP_FAIL;
+    }
   }
 
   int content_len = esp_http_client_fetch_headers(http);

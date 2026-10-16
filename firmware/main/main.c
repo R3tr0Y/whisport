@@ -155,6 +155,10 @@ static int do_sync_announcements(void) {
     printf("尚未认领：先执行 pair <配对码>\n");
     return 1;
   }
+  if (!app_net_wait_time(pdMS_TO_TICKS(15000))) {
+    printf("系统时钟未同步（SNTP 进行中），跳过本次同步\n");
+    return 1;
+  }
 
   ui_set_syncing(true);
   char path[96];
@@ -169,11 +173,26 @@ static int do_sync_announcements(void) {
     return 1;
   }
   if (r.status == 401) {
-    printf("鉴权失败（密钥可能已被服务端轮换），尝试重新激活流程…\n");
-    app_store_clear_secret();
+    /* 分类处理：只有密钥真失效才清本地凭证，时钟问题保留密钥 */
+    bool key_gone = false;
+    cJSON *ej = cJSON_ParseWithLength(r.body, r.body_len);
+    if (ej) {
+      cJSON *err = cJSON_GetObjectItem(ej, "error");
+      const char *code = cJSON_GetStringValue(cJSON_GetObjectItem(err, "code"));
+      if (code && (strcmp(code, "bad_signature") == 0 || strcmp(code, "unknown_device") == 0)) {
+        key_gone = true;
+      } else if (code && strcmp(code, "stale_timestamp") == 0) {
+        printf("签名时间戳超窗（时钟未同步），保留密钥\n");
+      }
+      cJSON_Delete(ej);
+    }
+    if (key_gone) {
+      printf("密钥已失效（服务端轮换），转入重新激活流程…\n");
+      app_store_clear_secret();
+      refresh_status();
+    }
     app_api_free(&r);
     ui_set_syncing(false);
-    refresh_status();
     return 1;
   }
   if (r.status != 200) {
@@ -336,6 +355,7 @@ void app_main(void) {
   } else {
     ui_init();
     refresh_status();
+    bsp_display_backlight(100); /* BSP 初始化背光为 0，必须显式点亮 */
   }
   ESP_ERROR_CHECK(bsp_battery_init());
 

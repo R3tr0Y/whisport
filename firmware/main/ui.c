@@ -20,8 +20,9 @@
 
 #define CARD_MAX 6
 
-static lv_obj_t *s_status_label;
-static lv_obj_t *s_net_label;
+static lv_obj_t *s_status_label;   /* 右：短 device id */
+static lv_obj_t *s_key_label;     /* 中：KEY OK / NO KEY */
+static lv_obj_t *s_net_label;     /* 左：WIFI / OFFLINE */
 static lv_obj_t *s_batt_label;
 static lv_obj_t *s_sync_label;
 static lv_obj_t *s_list;
@@ -82,8 +83,14 @@ void ui_init(void) {
   lv_obj_set_style_text_font(s_net_label, &lv_font_montserrat_14, 0);
   lv_obj_align(s_net_label, LV_ALIGN_LEFT_MID, 8, 0);
 
+  s_key_label = lv_label_create(status_row);
+  lv_label_set_text(s_key_label, "NO KEY");
+  lv_obj_set_style_text_color(s_key_label, lv_color_hex(C_ACCENT), 0);
+  lv_obj_set_style_text_font(s_key_label, &lv_font_montserrat_14, 0);
+  lv_obj_align(s_key_label, LV_ALIGN_CENTER, 0, 0);
+
   s_status_label = lv_label_create(status_row);
-  lv_label_set_text(s_status_label, "booting...");
+  lv_label_set_text(s_status_label, "--------");
   lv_obj_set_style_text_color(s_status_label, lv_color_hex(C_MUTED), 0);
   lv_obj_set_style_text_font(s_status_label, &lv_font_montserrat_14, 0);
   lv_obj_align(s_status_label, LV_ALIGN_RIGHT_MID, -8, 0);
@@ -141,11 +148,16 @@ void ui_set_status(const char *device_id, bool has_secret, bool online) {
   lv_label_set_text(s_net_label, online ? "WIFI" : "OFFLINE");
   lv_obj_set_style_text_color(s_net_label, lv_color_hex(online ? C_OK : C_BAD), 0);
 
-  char buf[48];
-  snprintf(buf, sizeof(buf), "%s · %s", device_id ? device_id : "?",
-           has_secret ? "key ok" : "no key");
-  lv_label_set_text(s_status_label, buf);
-  lv_obj_set_style_text_color(s_status_label, lv_color_hex(has_secret ? C_OK : C_ACCENT), 0);
+  /* 三段式：左 网络 / 中 密钥 / 右 短 id（纯 ASCII，避免 Montserrat 缺字形） */
+  lv_label_set_text(s_key_label, has_secret ? "KEY OK" : "NO KEY");
+  lv_obj_set_style_text_color(s_key_label, lv_color_hex(has_secret ? C_OK : C_ACCENT), 0);
+
+  char short_id[9] = "--------";
+  if (device_id) {
+    memcpy(short_id, device_id, 8);
+    short_id[8] = '\0';
+  }
+  lv_label_set_text(s_status_label, short_id);
 
   int soc = bsp_battery_soc();
   if (soc >= 0) {

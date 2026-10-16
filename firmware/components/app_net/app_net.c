@@ -1,9 +1,11 @@
 #include "app_net.h"
 
 #include <string.h>
+#include <time.h>
 
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_netif_sntp.h"
 #include "esp_wifi.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
@@ -15,6 +17,7 @@ static const char *TAG = "net";
 
 static EventGroupHandle_t s_events;
 static volatile bool s_connected = false;
+static bool s_sntp_started = false;
 
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
   if (base == WIFI_EVENT) {
@@ -35,6 +38,16 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
     ip_event_got_ip_t *evt = (ip_event_got_ip_t *)data;
     ESP_LOGI(TAG, "got ip " IPSTR, IP2STR(&evt->ip_info.ip));
     s_connected = true;
+    if (!s_sntp_started) {
+      /* 首次拿到 IP 后启动 SNTP：HMAC 签名时间戳依赖系统时钟（云端 ±120s 窗口） */
+      esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("ntp.aliyun.com");
+      if (esp_netif_sntp_init(&cfg) == ESP_OK) {
+        s_sntp_started = true;
+        ESP_LOGI(TAG, "sntp started");
+      } else {
+        ESP_LOGW(TAG, "sntp init failed");
+      }
+    }
     if (s_events) xEventGroupSetBits(s_events, GOT_IP_BIT);
   }
 }
@@ -68,6 +81,13 @@ esp_err_t app_net_init(void) {
 esp_err_t app_net_wait_connected(TickType_t timeout) {
   EventBits_t bits = xEventGroupWaitBits(s_events, GOT_IP_BIT, pdFALSE, pdTRUE, timeout);
   return (bits & GOT_IP_BIT) ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+bool app_net_wait_time(TickType_t timeout) {
+  if (time(NULL) > 1700000000) return true; /* 已是 2023 年后，视为已同步 */
+  if (!s_sntp_started) return false;
+  esp_err_t err = esp_netif_sntp_sync_wait(timeout);
+  return err == ESP_OK && time(NULL) > 1700000000;
 }
 
 bool app_net_is_connected(void) {
