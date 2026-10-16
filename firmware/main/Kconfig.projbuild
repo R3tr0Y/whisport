@@ -1,0 +1,17 @@
+menu "Whisport"
+
+    config WS_SERVER_URL
+        string "服务器基础 URL"
+        default "https://ai-passport-board.your-subdomain.workers.dev"
+        help
+            Cloudflare Worker 部署地址（末尾不带斜杠）。
+
+    config WS_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+
+    config WS_WIFI_PASS
+        string "Wi-Fi 密码"
+        default ""
+
+endmenu
