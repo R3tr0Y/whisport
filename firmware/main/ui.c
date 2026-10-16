@@ -149,6 +149,7 @@ void ui_set_status(const char *device_id, bool has_secret, bool online) {
 
   int soc = bsp_battery_soc();
   if (soc >= 0) {
+    if (soc > 100) soc = 100;
     char b[8];
     snprintf(b, sizeof(b), "%d%%", soc);
     lv_label_set_text(s_batt_label, b);

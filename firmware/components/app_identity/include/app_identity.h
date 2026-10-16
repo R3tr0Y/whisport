@@ -12,6 +12,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "esp_err.h"
+
 #define APP_DEVICE_ID_LEN 33  /* 32 hex + '\0' */
 
 /* eFuse MAC（小写无分隔符，12 hex 字符） */

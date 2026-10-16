@@ -6,6 +6,7 @@
 #include <time.h>
 
 #include "app_store.h"
+#include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_mac.h"

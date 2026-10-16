@@ -8,6 +8,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "esp_err.h"
+
 #define APP_SECRET_HEX_LEN 65  /* 32 字节 hex + '\0' */
 
 esp_err_t app_store_init(void);
