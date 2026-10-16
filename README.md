@@ -11,8 +11,9 @@
 web/        Cloudflare Pages 项目（whisport.pages.dev）：
             public/ 静态管理后台 · functions/ REST API 适配层 · core/ 服务端逻辑 · tests/ 19 项集成测试
 realtime/   伴生 Worker whisport-realtime：承载 PresenceDO（M2 加 RoomDO），无公网路由
-firmware/   ESP-IDF 固件（M1 骨架：身份链路 + 公告拉取；音频对讲属 M2）
+firmware/   ESP-IDF 固件（M1：身份链路 + 公告板；板级复用官方 ai-passport BSP，音频对讲属 M2）
 docs/       API 规范 · WSS 协议 · 部署指南 · 决策记录
+vendor/     官方 ai-passport 参考工程（克隆生成，gitignore）
 ```
 
 > 域名说明：`workers.dev` 国内不可达，全部用户流量走 **pages.dev**；Durable Objects 因 Pages 限制由伴生 Worker 承载（决策 D12/D13）。
@@ -39,9 +40,10 @@ npm test                                # 19 项集成测试
 # 生产部署（含 realtime 伴生 Worker、secrets、线上冒烟）
 # 见 docs/deployment.md
 
-# 固件
+# 固件（依赖 ESP-IDF 5.5.3 + 官方 BSP）
+git clone --depth 1 https://gitee.com/FoloToy/ai-passport vendor/ai-passport
 cd firmware && idf.py set-target esp32c3 && idf.py menuconfig && idf.py build flash monitor
-# 控制台：pair <配对码> / sync / status
+# 串口控制台：pair <配对码> / sync / status
 ```
 
 ## 核心机制速览

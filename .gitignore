@@ -27,3 +27,4 @@ firmware/main/managed_components/
 *.swp
 Thumbs.db
 .DS_Store
+vendor/

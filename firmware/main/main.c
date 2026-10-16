@@ -1,8 +1,12 @@
 /**
  * whisport 固件入口（M1：身份链路 + 公告板）
  *
- * 流程：NVS → 网络 → （无凭证则配对/重新激活）→ 周期同步公告。
- * 控制台命令：pair <配对码> / sync / status（见 app_ui）。
+ * 板级能力全部走官方 FoloToy AI-Passport BSP（components/bsp，经 EXTRA_COMPONENT_DIRS 引入）：
+ *   bsp_i2c / bsp_display+LVGL / bsp_button / bsp_battery。
+ * UI 为独立重设计（main/ui.c），不沿用官方 demo 测试菜单与 ui_pixel 外壳（官方 fork 规范）。
+ *
+ * 控制台命令（USB-Serial-JTAG）：pair <6位码> / sync / status
+ * 按键（M1）：长按=立即同步；短按/双击=列表滚动（预留 PTT 语义见规划 §7.2）
  */
 #include <stdio.h>
 #include <string.h>
@@ -12,31 +16,55 @@
 #include "app_identity.h"
 #include "app_net.h"
 #include "app_store.h"
-#include "app_ui.h"
+#include "bsp_battery.h"
+#include "bsp_button.h"
+#include "bsp_display.h"
+#include "bsp_i2c.h"
 #include "cJSON.h"
+#include "esp_console.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
+#include "ui.h"
 
 static const char *TAG = "main";
 
-static int do_sync_announcements(void); /* do_pair 中先行调用 */
-
-#define SYNC_INTERVAL_MS (5 * 60 * 1000)   /* 公告同步周期 */
-#define REACT_POST_INTERVAL_US (3600LL * 1000 * 1000) /* 重新激活请求最多每小时一次 */
+#define SYNC_INTERVAL_MS (5 * 60 * 1000)
+#define REACT_POST_INTERVAL_US (3600LL * 1000 * 1000)
 
 static int64_t s_last_react_post_us = -REACT_POST_INTERVAL_US;
+static QueueHandle_t s_keys;
 
-static void print_status(void) {
+typedef struct {
+  bsp_btn_t btn;
+  bsp_btn_ev_t ev;
+} key_evt_t;
+
+/* ---------- 状态展示 ---------- */
+
+static void refresh_status(void) {
   char device_id[APP_DEVICE_ID_LEN];
   app_identity_device_id(device_id);
-  app_ui_show_status(device_id, app_identity_has_secret(), app_net_is_connected());
+  ui_set_status(device_id, app_identity_has_secret(), app_net_is_connected());
 }
-void whisport_print_status(void) { print_status(); }
+
+void whisport_print_status(void) {
+  char device_id[APP_DEVICE_ID_LEN];
+  app_identity_device_id(device_id);
+  printf("\n---- 设备状态 ----\n");
+  printf("device_id : %s\n", device_id);
+  printf("凭证      : %s\n", app_identity_has_secret() ? "已保存（L2 NVS）" : "缺失（待配对/重新激活）");
+  printf("网络      : %s\n", app_net_is_connected() ? "在线" : "离线");
+  printf("------------------\n");
+  refresh_status();
+}
 
 /* ---------- 认领与重新激活 ---------- */
+
+static int do_sync_announcements(void);
 
 static int do_pair(const char *code) {
   char mac[13];
@@ -80,11 +108,11 @@ static int do_pair(const char *code) {
          id ? id->valuestring : "?");
   cJSON_Delete(root);
 
-  do_sync_announcements();
-  return 0;
+  refresh_status();
+  return do_sync_announcements();
 }
 
-/* 无凭证时的自动恢复：请求重新激活（管理员批准后轮询取回新密钥） */
+/* 无凭证时自动恢复：请求重新激活（管理员批准后轮询取回新密钥） */
 static void try_reactivate(void) {
   char mac[13];
   app_identity_mac(mac);
@@ -112,6 +140,7 @@ static void try_reactivate(void) {
   if (status && strcmp(status, "ok") == 0 && secret && strlen(secret) == 64) {
     if (app_identity_save_secret(secret) == ESP_OK) {
       ESP_LOGI(TAG, "重新激活成功，新密钥已保存");
+      refresh_status();
     }
   } else {
     ESP_LOGI(TAG, "重新激活状态: %s（等待管理员批准）", status ? status : "?");
@@ -121,12 +150,13 @@ static void try_reactivate(void) {
 
 /* ---------- 公告同步 ---------- */
 
-int do_sync_announcements(void) {
+static int do_sync_announcements(void) {
   if (!app_identity_has_secret()) {
     printf("尚未认领：先执行 pair <配对码>\n");
     return 1;
   }
 
+  ui_set_syncing(true);
   char path[96];
   snprintf(path, sizeof(path), "/api/announcements?since=%lld",
            (long long)app_store_get_cursor());
@@ -135,23 +165,30 @@ int do_sync_announcements(void) {
   esp_err_t err = app_api_signed_get(path, &r);
   if (err != ESP_OK) {
     printf("网络错误: %s\n", esp_err_to_name(err));
+    ui_set_syncing(false);
     return 1;
   }
   if (r.status == 401) {
     printf("鉴权失败（密钥可能已被服务端轮换），尝试重新激活流程…\n");
     app_store_clear_secret();
     app_api_free(&r);
+    ui_set_syncing(false);
+    refresh_status();
     return 1;
   }
   if (r.status != 200) {
     printf("拉取失败 HTTP %d\n", r.status);
     app_api_free(&r);
+    ui_set_syncing(false);
     return 1;
   }
 
   cJSON *root = cJSON_ParseWithLength(r.body, r.body_len);
   app_api_free(&r);
-  if (!root) return 1;
+  if (!root) {
+    ui_set_syncing(false);
+    return 1;
+  }
 
   cJSON *items = cJSON_GetObjectItem(root, "items");
   cJSON *cursor = cJSON_GetObjectItem(root, "cursor");
@@ -169,31 +206,65 @@ int do_sync_announcements(void) {
       a->priority = (int)cJSON_GetNumberValue(cJSON_GetObjectItem(it, "priority"));
       a->created_at = (long)cJSON_GetNumberValue(cJSON_GetObjectItem(it, "created_at"));
       const char *t = cJSON_GetStringValue(cJSON_GetObjectItem(it, "title"));
-      strlcpy(a->title, t ? t : "(无标题)", sizeof(a->title));
+      strlcpy(a->title, t ? t : "(no title)", sizeof(a->title));
     }
+    printf("公告 ×%u（最新 #%ld）\n", (unsigned)n, list.items[n - 1].id);
+  } else {
+    printf("无新公告\n");
   }
 
   long last_read = app_store_get_last_read();
-  app_ui_show_announcements(&list, last_read);
+  ui_show_announcements(&list, last_read);
   free(list.items);
 
-  /* 控制台场景：展示即已读；屏幕 UI 接入后改为按键确认已读 */
+  /* 屏幕展示即已读（M1）；按键确认已读留给 M2 交互 */
   if (cJSON_IsNumber(cursor)) {
     app_store_set_cursor((int64_t)cursor->valuedouble);
     app_store_set_last_read((int64_t)cursor->valuedouble);
   }
   cJSON_Delete(root);
+  ui_set_syncing(false);
   return 0;
 }
 
-/* ---------- 任务 ---------- */
+/* ---------- 按键（回调只入队，禁阻塞——官方 BSP 规则） ---------- */
+
+static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user) {
+  (void)user;
+  key_evt_t e = { .btn = btn, .ev = ev };
+  xQueueSend(s_keys, &e, 0);
+}
+
+static void input_task(void *arg) {
+  (void)arg;
+  key_evt_t e;
+  for (;;) {
+    if (xQueueReceive(s_keys, &e, portMAX_DELAY) != pdTRUE) continue;
+    switch (e.ev) {
+      case BSP_BTN_LONG:
+        /* 长按：立即同步（M2 在通话/频道内为 PTT 说话） */
+        do_sync_announcements();
+        break;
+      case BSP_BTN_CLICK:
+      case BSP_BTN_DOUBLE:
+        /* M1 预留：列表滚动 / 返回 */
+        break;
+      default:
+        break;
+    }
+  }
+}
+
+/* ---------- 周期同步 ---------- */
 
 static void sync_task(void *arg) {
   (void)arg;
   app_net_wait_connected(portMAX_DELAY);
+  refresh_status();
   for (;;) {
     if (!app_net_is_connected()) {
       app_net_wait_connected(portMAX_DELAY);
+      refresh_status();
     }
     if (app_identity_has_secret()) {
       do_sync_announcements();
@@ -203,6 +274,47 @@ static void sync_task(void *arg) {
     vTaskDelay(pdMS_TO_TICKS(SYNC_INTERVAL_MS));
   }
 }
+
+/* ---------- 控制台（bring-up 输入通道：六位配对码） ---------- */
+
+static int cmd_pair(int argc, char **argv) {
+  return (argc == 2) ? do_pair(argv[1]) : (printf("用法: pair <6位配对码>\n"), 1);
+}
+
+static int cmd_sync(int argc, char **argv) {
+  (void)argc; (void)argv;
+  return do_sync_announcements();
+}
+
+static int cmd_status(int argc, char **argv) {
+  (void)argc; (void)argv;
+  whisport_print_status();
+  return 0;
+}
+
+static void console_init(void) {
+  esp_console_repl_config_t repl_cfg = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
+  repl_cfg.prompt = "whisport> ";
+  repl_cfg.max_cmdline_length = 128;
+
+  esp_console_dev_usb_serial_jtag_config_t hw =
+      ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
+  esp_console_repl_t *repl = NULL;
+  if (esp_console_new_repl_usb_serial_jtag(&hw, &repl_cfg, &repl) != ESP_OK) {
+    ESP_LOGW(TAG, "console unavailable; pair via NVS tools or M2 keypad UI");
+    return;
+  }
+
+  esp_console_cmd_t pair_cmd = { .command = "pair", .help = "pair <6位配对码> — 认领设备并保存密钥", .func = cmd_pair };
+  esp_console_cmd_register(&pair_cmd);
+  esp_console_cmd_t sync_cmd = { .command = "sync", .help = "立即拉取公告", .func = cmd_sync };
+  esp_console_cmd_register(&sync_cmd);
+  esp_console_cmd_t status_cmd = { .command = "status", .help = "查看设备状态", .func = cmd_status };
+  esp_console_cmd_register(&status_cmd);
+  esp_console_start_repl(repl);
+}
+
+/* ---------- 启动（对齐官方 main.c 启动序） ---------- */
 
 void app_main(void) {
   esp_err_t err = nvs_flash_init();
@@ -217,9 +329,21 @@ void app_main(void) {
   ESP_LOGI(TAG, "whisport M1 · device_id=%s · secret=%s", device_id,
            app_identity_has_secret() ? "present" : "absent");
 
-  app_ui_register_actions(do_pair, do_sync_announcements);
-  app_ui_init();
+  ESP_ERROR_CHECK(bsp_i2c_init());
+  ESP_ERROR_CHECK(bsp_display_init());
+  if (bsp_lvgl_init() == NULL) {
+    ESP_LOGE(TAG, "lvgl init failed");
+  } else {
+    ui_init();
+    refresh_status();
+  }
+  ESP_ERROR_CHECK(bsp_battery_init());
 
+  s_keys = xQueueCreate(8, sizeof(key_evt_t));
+  ESP_ERROR_CHECK(bsp_button_init(on_key, NULL));
+  xTaskCreate(input_task, "input", 4096, NULL, 5, NULL);
+
+  console_init();
   ESP_ERROR_CHECK(app_net_init());
   xTaskCreate(sync_task, "sync", 8192, NULL, 5, NULL);
 }

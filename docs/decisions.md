@@ -18,6 +18,7 @@
 | D12 | **部署形态改为 Cloudflare Pages（pages.dev）**，取代 D1 的统一 Worker | `workers.dev` 域名国内不可达；`pages.dev` 可达。静态+functions 同源、D1/KV 绑定不变 | 用户/设备全部走 `https://whisport.pages.dev`；旧 Worker `ai-passport-board` 已删除 |
 | D13 | **PresenceDO 宿主为伴生 Worker `whisport-realtime`**（workers_dev=false，无公网路由） | Pages 不能定义 DO 类，绑定必须 `script_name` 指向独立 Worker；实现代码仍在 `web/core/presence.ts` 单一事实源，两端共享 | M2 的 RoomDO 也放入该 Worker；DO 无持久状态，迁移零成本 |
 | D14 | **Cron → 惰性清理**（whoami 触发，KV 水位 1h 节流） | Pages 不支持 Cron Triggers；玩具规模下无管理访问即无垃圾产生 | 闲置期间不清理但无影响；`scheduled` 导出保留给可选 cron worker |
+| D15 | **固件板级底座对齐官方 ai-passport BSP**（`EXTRA_COMPONENT_DIRS` 引用 vendor/ai-passport/components/bsp），应用 UI 独立重设计 | 官方工程有完整板级驱动（ES8311/按键/ST7789/LVGL9.5/电池）与真机验证；fork 规范要求 UI 重设计且 BSP 可复用 | 音频/按键/显示走 `bsp_*` API；官方无网络栈与语音编码，STA 连接与 Opus 仍自建（M2） |
 
 ## 测试基建备注
 
