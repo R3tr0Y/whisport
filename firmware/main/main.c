@@ -219,11 +219,9 @@ int app_set_label(const char *label) {
   return rc;
 }
 
-/**
- * 公告同步（S6：不加全局锁——缓存单写者（本任务/按键事务）、NVS 线程安全；
- * 原先在 15s HTTPS 全程持锁会把配网页的写操作卡到超时）
- */
-int app_sync_announcements(void) {
+/** 通用抓取：path 为完整查询串；cursor_monotonic=true 时游标只增不减（recent 种缓存用）。
+ *  S6：不加全局锁——缓存单写者（同步任务/按键事务）、NVS 线程安全 */
+static int fetch_announcements(const char *path, bool cursor_monotonic) {
   if (!app_identity_has_secret()) {
     return 1;
   }
@@ -233,9 +231,6 @@ int app_sync_announcements(void) {
   }
 
   ui_set_syncing(true);
-  char path[96];
-  snprintf(path, sizeof(path), "/api/announcements?since=%d", (int)app_store_get_cursor());
-
   app_api_resp_t r;
   esp_err_t err = app_api_signed_get(path, &r);
   if (err != ESP_OK) {
@@ -302,10 +297,28 @@ int app_sync_announcements(void) {
   }
   render_announcements();
 
-  if (cJSON_IsNumber(cursor)) app_store_set_cursor((int64_t)cursor->valuedouble);
+  if (cJSON_IsNumber(cursor)) {
+    int64_t c = (int64_t)cursor->valuedouble;
+    if (cursor_monotonic) {
+      if (c > app_store_get_cursor()) app_store_set_cursor(c); /* recent：游标只增不减 */
+    } else {
+      app_store_set_cursor(c);
+    }
+  }
   cJSON_Delete(root);
   ui_set_syncing(false);
   return 0;
+}
+
+int app_sync_announcements(void) {
+  char path[96];
+  snprintf(path, sizeof(path), "/api/announcements?since=%d", (int)app_store_get_cursor());
+  return fetch_announcements(path, false);
+}
+
+/** 开机种缓存：拉最近 6 条（刷机/重启后 RAM 缓存为空、游标已越过旧公告的场景） */
+static int seed_recent_announcements(void) {
+  return fetch_announcements("/api/announcements?recent=6", true);
 }
 
 /* ---------------- 重新激活（无凭证自动恢复） ---------------- */
@@ -433,6 +446,7 @@ static void input_task(void *arg) {
           if (e.btn != BSP_BTN_OK) break;
           switch (s_menu_sel) {
             case MENU_ANN:
+              if (s_count == 0) app_sync_announcements(); /* 空列表（离线启动过）时补拉 */
               render_announcements();
               ui_show_ann_list();
               break;
@@ -501,7 +515,8 @@ static void sync_task(void *arg) {
       app_refresh_status();
     }
     if (app_identity_has_secret()) {
-      app_sync_announcements();
+      if (s_count == 0) seed_recent_announcements(); /* 开机/刷机后种入最近公告 */
+      else app_sync_announcements();
     } else {
       try_reactivate();
     }
@@ -569,6 +584,50 @@ static int cmd_pin(int argc, char **argv) {
   return 0;
 }
 
+/* 诊断：LVGL 内存池 + 系统堆 */
+static int cmd_lvmem(int argc, char **argv) {
+  (void)argc; (void)argv;
+  char buf[160];
+  ui_mem_info(buf, sizeof(buf));
+  printf("%s\n", buf);
+  printf("heap 空闲: %u, 最小历史: %u\n", (unsigned)esp_get_free_heap_size(),
+         (unsigned)esp_get_minimum_free_heap_size());
+  return 0;
+}
+
+/* 诊断：LVGL 内实际文本导出（缺字排查：字符串损坏 vs 渲染缺字） */
+static int cmd_uitree(int argc, char **argv) {
+  (void)argc; (void)argv;
+  static char buf[768];
+  ui_debug_dump(buf, sizeof(buf));
+  printf("%s", buf);
+  return 0;
+}
+
+/* 开发/测试用：注入按键事件（免手动） */
+static int cmd_key(int argc, char **argv) {
+  if (argc < 2) {
+    printf("用法: key <up|down|ok> [press|click|double|long]\n");
+    return 1;
+  }
+  bsp_btn_t btn = BSP_BTN_OK;
+  if (strcmp(argv[1], "up") == 0) btn = BSP_BTN_UP;
+  else if (strcmp(argv[1], "down") == 0) btn = BSP_BTN_DOWN;
+  bsp_btn_ev_t ev = BSP_BTN_CLICK;
+  if (argc > 2) {
+    if (strcmp(argv[2], "press") == 0) ev = BSP_BTN_PRESS;
+    else if (strcmp(argv[2], "double") == 0) ev = BSP_BTN_DOUBLE;
+    else if (strcmp(argv[2], "long") == 0) ev = BSP_BTN_LONG;
+  }
+  key_evt_t e = { .btn = btn, .ev = ev };
+  if (xQueueSend(s_keys, &e, pdMS_TO_TICKS(100)) != pdTRUE) {
+    printf("key queue full\n");
+    return 1;
+  }
+  printf("key injected: %s %s\n", argv[1], argc > 2 ? argv[2] : "click");
+  return 0;
+}
+
 /* 开发/测试用：直接设置 Wi-Fi 凭据（正式用户走配网页） */
 static int cmd_wifi(int argc, char **argv) {
   if (argc < 2) {
@@ -599,6 +658,9 @@ static void console_init(void) {
       { .command = "prov", .help = "清除 Wi-Fi 凭据并重启（进入配网模式）", .func = cmd_prov },
       { .command = "wifi", .help = "wifi <ssid> [密码] — 直接设置 Wi-Fi（开发/恢复用）", .func = cmd_wifi },
       { .command = "pin", .help = "打印当前配网 PIN", .func = cmd_pin },
+      { .command = "lvmem", .help = "LVGL 内存池/堆诊断", .func = cmd_lvmem },
+      { .command = "key", .help = "key <up|down|ok> [press|click|double|long] — 注入按键", .func = cmd_key },
+      { .command = "uitree", .help = "导出 LVGL 当前文本（缺字排查）", .func = cmd_uitree },
   };
   for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
     esp_console_cmd_register(&cmds[i]);

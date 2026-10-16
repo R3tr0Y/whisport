@@ -279,6 +279,8 @@ static void show_only(lv_obj_t *target) {
     if (all[i] == target) lv_obj_clear_flag(all[i], LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(all[i], LV_OBJ_FLAG_HIDDEN);
   }
+  /* 全屏强制重绘：隐藏/显示切换后局部失效标记可能留下陈旧像素（表现为缺字母） */
+  lv_obj_invalidate(lv_scr_act());
 }
 
 ui_screen_t ui_current_screen(void) {
@@ -399,6 +401,13 @@ void ui_show_detail(const app_announcement_t *a) {
 }
 
 void ui_hide_detail(void) {
+  /* 释放详情正文/标题占用的 LVGL 池（480B 级文本反复进出会加剧碎片） */
+  if (with_lock(300)) {
+    lv_label_set_text(s_d_title, "");
+    lv_label_set_text(s_d_meta, "");
+    lv_label_set_text(s_d_body, "");
+    unlock();
+  }
   ui_show_ann_list();
 }
 
@@ -412,6 +421,46 @@ bool ui_detail_visible(void) {
 void ui_scroll_detail(int dir) {
   if (!with_lock(300)) return;
   lv_obj_scroll_by(s_d_body_box, 0, dir > 0 ? -44 : 44, LV_ANIM_ON);
+  unlock();
+}
+
+/* 诊断：LVGL 内存池状态（开发用） */
+void ui_mem_info(char *buf, size_t len) {
+  if (!with_lock(500)) {
+    snprintf(buf, len, "lvgl lock busy");
+    return;
+  }
+  lv_mem_monitor_t mon;
+  lv_mem_monitor(&mon);
+  snprintf(buf, len, "lvgl pool: total=%u free=%u biggest=%u frag=%u%% used=%u%%",
+           (unsigned)mon.total_size, (unsigned)mon.free_size,
+           (unsigned)mon.free_biggest_size, (unsigned)mon.frag_pct, (unsigned)mon.used_pct);
+  unlock();
+}
+
+/* 诊断：导出 LVGL 内实际存储的文本（区分"字符串损坏"与"渲染缺字"） */
+void ui_debug_dump(char *buf, size_t len) {
+  if (!with_lock(800)) {
+    snprintf(buf, len, "lvgl lock busy");
+    return;
+  }
+  size_t used = 0;
+  const char *scr_names[] = { "MENU", "ANN", "DETAIL", "INFO" };
+  used += snprintf(buf + used, len - used, "screen=%s\n", scr_names[s_screen]);
+  for (int i = 0; i < MENU_MAX; i++) {
+    lv_obj_t *lab = lv_obj_get_child(s_menu_rows[i], 0);
+    const char *t = lab ? lv_label_get_text(lab) : "?";
+    bool hidden = lv_obj_has_flag(s_menu_rows[i], LV_OBJ_FLAG_HIDDEN);
+    used += snprintf(buf + used, len - used, "row%d%s=[%s]\n", i, hidden ? "(H)" : "", t ? t : "NULL");
+    if (used >= len - 8) break;
+  }
+  for (int i = 0; i < 4; i++) {
+    const char *t = lv_label_get_text(s_info_lines[i]);
+    used += snprintf(buf + used, len - used, "info%d=[%s]\n", i, t ? t : "NULL");
+    if (used >= len - 8) break;
+  }
+  const char *dt = lv_label_get_text(s_d_title);
+  used += snprintf(buf + used, len - used, "detail_title=[%s]\n", dt ? dt : "NULL");
   unlock();
 }
 

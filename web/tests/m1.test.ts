@@ -200,8 +200,27 @@ describe("公告板（F1 三级可见性 + 游标）", () => {
     expect(o.items.some((i) => i.title === "点名公告")).toBe(false);
   });
 
-  it("过期公告被隐藏（含 max_announcement_id）", async () => {
+  it("recent=N：返回最近 N 条（刷机后种缓存用，游标=最大 id）", async () => {
     const d = await claimDevice();
+    const ids: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await adminFetch("/api/admin/announcements", {
+        method: "POST",
+        body: JSON.stringify({ title: `recent-${i}`, body: "x", targets: [{ type: "all" }] }),
+      });
+      ids.push(((await r.json()) as { id: number }).id);
+    }
+    const resp = await signedFetch(d.secret, d.deviceId, "GET", "/api/announcements?recent=2");
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as { items: { id: number }[]; cursor: number };
+    expect(body.items.map((i) => i.id)).toEqual([ids[1], ids[2]]); // 最近两条，升序返回
+    expect(body.cursor).toBe(ids[2]);
+
+    const bad = await signedFetch(d.secret, d.deviceId, "GET", "/api/announcements?recent=99");
+    expect(bad.status).toBe(400);
+  });
+
+  it("过期公告被隐藏（含 max_announcement_id）", async () => {    const d = await claimDevice();
     const now = Math.floor(Date.now() / 1000);
     // 直接落库一条已过期公告（API 校验拒绝过去时间，属正常路径外数据）
     const r = await env.DB.prepare(

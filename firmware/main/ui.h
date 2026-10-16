@@ -68,4 +68,10 @@ int ui_menu_selected(void);
 void ui_show_info(const char *title, const char *l1, const char *l2, const char *l3, const char *l4);
 void ui_show_intercom(void);
 
+/* 诊断：LVGL 内存池状态 */
+void ui_mem_info(char *buf, size_t len);
+
+/* 诊断：导出 LVGL 内实际文本（缺字排查） */
+void ui_debug_dump(char *buf, size_t len);
+
 #endif /* WHISPORT_UI_H */

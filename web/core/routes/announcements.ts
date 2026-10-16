@@ -17,9 +17,32 @@ const VIS =
   "   OR (t.target_type = 'group' AND t.target_id IN" +
   "       (SELECT group_id FROM group_members WHERE device_id = ?1))))";
 
-/** GET /api/announcements?since=<id> — 设备增量拉取可见公告（HMAC） */
+/** GET /api/announcements?since=<id> — 设备增量拉取可见公告（HMAC）
+ *  ?recent=N — 忽略 since，返回最近 N 条可见公告（≤20；刷机/首启后种入缓存用） */
 export async function listForDevice(ctx: Ctx): Promise<Response> {
   const { deviceId } = await deviceAuth(ctx.req, ctx.env);
+
+  const recentParam = ctx.url.searchParams.get("recent");
+  if (recentParam !== null) {
+    const n = Number(recentParam);
+    if (!Number.isInteger(n) || n < 1 || n > 20) {
+      throw new ApiError(400, "bad_request", "recent must be an integer in [1, 20]");
+    }
+    const { results } = await ctx.env.DB.prepare(
+      `SELECT a.id, a.title, a.body, a.priority, a.created_at, a.expires_at
+       FROM announcements a WHERE ${VIS}
+       ORDER BY a.id DESC LIMIT ?3`,
+    )
+      .bind(deviceId, nowSec(), n)
+      .all();
+    // 与增量路径一致：升序返回，游标=最大 id
+    results.reverse();
+    const cursor = results.length
+      ? Math.max(...results.map((r) => Number((r as { id: number }).id)))
+      : 0;
+    return json({ items: results, cursor });
+  }
+
   const since = Number(ctx.url.searchParams.get("since") ?? "0");
   if (!Number.isInteger(since) || since < 0) {
     throw new ApiError(400, "bad_request", "since must be a non-negative integer");
