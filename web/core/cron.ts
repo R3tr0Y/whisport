@@ -55,3 +55,19 @@ export async function runCleanup(env: Env, now = nowSec()): Promise<CleanupStats
 
   return stats;
 }
+
+/**
+ * 惰性触发（Pages 无 Cron Triggers）：管理后台每次 whoami 检查，
+ * 距上次清理超过 1 小时才真正执行；KV 记录水位，并发下重复执行也无害（幂等）。
+ */
+export async function maybeCleanup(env: Env, now = nowSec()): Promise<void> {
+  try {
+    const last = Number((await env.CACHE.get("cleanup:last")) ?? "0");
+    if (now - last < 3600) return;
+    await env.CACHE.put("cleanup:last", String(now), { expirationTtl: 7 * DAY });
+    const stats = await runCleanup(env, now);
+    console.log("lazy cleanup:", JSON.stringify(stats));
+  } catch (e) {
+    console.warn("lazy cleanup failed (non-fatal):", e);
+  }
+}

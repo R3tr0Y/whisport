@@ -2,7 +2,7 @@
  * 本地冒烟测试：对运行中的 wrangler dev 走通 M1 全链路。
  * 用法：node scripts/smoke.mjs [base_url]
  */
-const BASE = process.argv[2] ?? "http://127.0.0.1:8787";
+const BASE = process.argv[2] ?? "https://whisport.pages.dev";
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "dev-admin-token";
 
 let pass = 0;

@@ -1,0 +1,23 @@
+# Cloudflare Pages 配置（whisport.pages.dev —— 国内可达，替代 workers.dev）
+# 静态后台（public/）+ Functions API（functions/）同源部署。
+# 生产密钥不在此文件：`npx wrangler pages secret put ADMIN_TOKEN / SECRET_ENC_KEY`
+name = "whisport"
+pages_build_output_dir = "public"
+compatibility_date = "2025-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ai-passport-board"
+database_id = "5fe0410f-10bb-4b12-8760-f7266244090d"
+migrations_dir = "migrations"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "df4cde86076e4319b003dca4494ebfea"
+
+[[durable_objects.bindings]]
+name = "PRESENCE"
+class_name = "PresenceDO"
+
+# Pages 不支持 Cron Triggers → 清理任务为惰性触发（core/cron.ts maybeCleanup，
+# 挂在管理后台 whoami），scheduled 导出保留给可选的独立 cron worker。

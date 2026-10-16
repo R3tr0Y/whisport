@@ -1,14 +1,14 @@
 {
-  "name": "ai-passport-board-worker",
+  "name": "whisport-web",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "wrangler pages dev",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "db:local": "wrangler d1 migrations apply ai-passport-board --local",
     "db:remote": "wrangler d1 migrations apply ai-passport-board --remote",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler pages deploy"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.8.0",

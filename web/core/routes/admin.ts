@@ -2,13 +2,15 @@ import type { Ctx } from "../router";
 import { ApiError, json, nowSec, readJson } from "../util";
 import { audit } from "../audit";
 import { requireAdmin } from "../auth";
+import { maybeCleanup } from "../cron";
 import { randomInt, sha256hex } from "../crypto";
 
 const PAIRING_CODE_TTL = 600; // 10 分钟
 
-/** GET /api/admin/whoami — 校验管理令牌 */
+/** GET /api/admin/whoami — 校验管理令牌（顺带惰性清理） */
 export async function whoami(ctx: Ctx): Promise<Response> {
   requireAdmin(ctx.req, ctx.env);
+  void maybeCleanup(ctx.env); // 尽力而为，不阻塞响应
   return json({ ok: true });
 }
 

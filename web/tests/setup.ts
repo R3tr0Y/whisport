@@ -1,6 +1,6 @@
 import schema from "../migrations/0001_init.sql?raw";
 import { env as cfEnv } from "cloudflare:test";
-import type { Env } from "../src/env";
+import type { Env } from "../core/env";
 
 /** 极简 SQL 语句切分：识别单引号字符串与 -- 注释，按 ; 切分（workerd 的 exec 对注释支持不佳） */
 function splitSql(sql: string): string[] {

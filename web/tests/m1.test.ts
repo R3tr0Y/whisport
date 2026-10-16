@@ -8,10 +8,10 @@ import {
   newPairingCode,
   signedFetch,
 } from "./helpers";
-import { deviceIdFromMac } from "../src/auth";
-import { hmacHex, randomHex } from "../src/crypto";
-import { restCanon } from "../src/auth";
-import { runCleanup } from "../src/cron";
+import { deviceIdFromMac } from "../core/auth";
+import { hmacHex, randomHex } from "../core/crypto";
+import { restCanon } from "../core/auth";
+import { runCleanup } from "../core/cron";
 
 const DAY = 86400;
 

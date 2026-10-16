@@ -1,7 +1,7 @@
 import { SELF, env as cfEnv } from "cloudflare:test";
-import type { Env } from "../src/env";
-import { hmacHex, randomHex, randomInt } from "../src/crypto";
-import { restCanon } from "../src/auth";
+import type { Env } from "../core/env";
+import { hmacHex, randomHex, randomInt } from "../core/crypto";
+import { restCanon } from "../core/auth";
 
 export const env = cfEnv as unknown as Env;
 export const BASE = "https://test.local";
