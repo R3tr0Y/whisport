@@ -31,10 +31,25 @@ git clone --depth 1 https://gitee.com/FoloToy/ai-passport vendor/ai-passport
 
 ## 构建
 
-```bash
-# 依赖 ESP-IDF 5.5.3（官方基线严格版本，勿用其它）
-source ~/esp/esp-idf/export.sh && idf.py --version   # 须输出 v5.5.3
+### 环境（Kali / Debian 系 + 国内网络）
 
+```bash
+# 1. 系统依赖（Kali 2026.3 实测）
+sudo apt-get install -y git python3 python3-venv cmake ninja-build \
+    flex bison gperf ccache dfu-util libusb-1.0-0 libffi-dev libssl-dev
+
+# 2. ESP-IDF 5.5.3（乐鑫国内镜像，子模块自动同镜像；GitHub 直连大仓易断流）
+git clone --branch v5.5.3 --recursive \
+    https://git.espressif.com.cn/espressif/esp-idf.git ~/esp/esp-idf
+IDF_GITHUB_ASSETS=dl.espressif.cn/github_assets ~/esp/esp-idf/install.sh esp32c3
+
+# 3. 每个新 shell 激活
+source ~/esp/esp-idf/export.sh && idf.py --version   # 须输出 v5.5.3
+```
+
+### 构建与烧录
+
+```bash
 idf.py set-target esp32c3
 idf.py menuconfig    # Whisport → Wi-Fi SSID/密码（服务地址默认 https://whisport.pages.dev）
 idf.py build flash monitor
