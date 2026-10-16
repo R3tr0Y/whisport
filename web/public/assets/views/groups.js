@@ -17,7 +17,7 @@ export async function renderGroups(root) {
     ${
       groups.length === 0
         ? '<div class="card"><p class="muted">暂无分组。分组用于公告可见性与广播频道成员（M2/M3）。</p></div>'
-        : groups
+        : `<div id="groups-wrap">${groups
             .map(
               (g) => `
       <div class="card" data-group="${esc(g.group_id)}">
@@ -50,7 +50,7 @@ export async function renderGroups(root) {
         </div>
       </div>`,
             )
-            .join("")
+            .join("")}</div>`
     }`;
 
   root.querySelector("#g-create").addEventListener("click", async () => {
@@ -65,7 +65,8 @@ export async function renderGroups(root) {
     }
   });
 
-  root.addEventListener("click", async (e) => {
+  // 监听挂在本次渲染新建的容器上（旧元素销毁即监听器销毁，避免叠加）
+  root.querySelector("#groups-wrap")?.addEventListener("click", async (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
 

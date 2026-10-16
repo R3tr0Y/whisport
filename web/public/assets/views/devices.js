@@ -74,9 +74,10 @@ export async function renderDevices(root) {
       </table>
     </div>`);
 
-  root.innerHTML = html.join("");
+  root.innerHTML = `<div id="dev-wrap">${html.join("")}</div>`;
 
-  root.addEventListener("click", onAction);
+  // 监听挂在本次渲染新建的容器上（旧元素销毁即监听器销毁，避免叠加）
+  root.querySelector("#dev-wrap").addEventListener("click", onAction);
 
   async function onAction(e) {
     const btn = e.target.closest("button");
@@ -89,7 +90,7 @@ export async function renderDevices(root) {
       try {
         await api(`/api/admin/reactivations/${id}/${approveId ? "approve" : "deny"}`, { method: "POST" });
         toast(approveId ? "已批准，等待设备取回新密钥" : "已拒绝");
-        root.removeEventListener("click", onAction);
+
         await renderDevices(root);
       } catch (err) {
         toast(err.message, true);
@@ -130,7 +131,7 @@ export async function renderDevices(root) {
         await api(`/api/admin/devices/${deviceId}/reset`, { method: "POST" });
         toast("已删除");
       }
-      root.removeEventListener("click", onAction);
+
       await renderDevices(root);
     } catch (err) {
       toast(err.message, true);

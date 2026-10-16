@@ -43,7 +43,7 @@ export async function renderAnnouncements(root) {
         <div style="margin-top:12px"><button class="primary" type="submit">发布</button></div>
       </form>
     </div>
-    <div class="card">
+    <div class="card" id="ann-list">
       <h3>已发布（${anns.length}）</h3>
       <table>
         <thead><tr><th>ID</th><th>标题</th><th>级别</th><th>可见目标</th><th>发布时间</th><th>过期</th><th></th></tr></thead>
@@ -103,7 +103,8 @@ export async function renderAnnouncements(root) {
     }
   });
 
-  root.addEventListener("click", async (e) => {
+  // 监听挂在本次渲染新建的列表元素上（旧元素销毁即监听器销毁，避免叠加）
+  root.querySelector("#ann-list").addEventListener("click", async (e) => {
     const del = e.target.closest("button[data-del]");
     if (!del) return;
     if (!(await confirmAction(`删除公告 #${del.dataset.del}？`))) return;

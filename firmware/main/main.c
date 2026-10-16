@@ -294,15 +294,16 @@ static void input_task(void *arg) {
   for (;;) {
     if (xQueueReceive(s_keys, &e, portMAX_DELAY) != pdTRUE) continue;
 
-    /* 详情视图内：UP/DN 滚动正文，OK 短按/双击/长按=返回 */
+    /* 详情视图内：仅 UP/DN 的 PRESS 滚动正文；OK 的短按/双击/长按=返回 */
     if (ui_detail_visible()) {
-      if (e.ev == BSP_BTN_CLICK || e.ev == BSP_BTN_DOUBLE) {
+      if (e.btn != BSP_BTN_OK) {
+        if (e.ev == BSP_BTN_PRESS) {
+          ui_scroll_detail(e.btn == BSP_BTN_UP ? -1 : 1);
+        }
+        continue; /* UP/DN 的 CLICK/DOUBLE 等一律忽略，避免误退出 */
+      }
+      if (e.ev == BSP_BTN_CLICK || e.ev == BSP_BTN_DOUBLE || e.ev == BSP_BTN_LONG) {
         ui_hide_detail();
-      } else if (e.ev == BSP_BTN_PRESS) {
-        if (e.btn == BSP_BTN_UP) ui_scroll_detail(-1);
-        else if (e.btn == BSP_BTN_DOWN) ui_scroll_detail(1);
-      } else if (e.ev == BSP_BTN_LONG && e.btn == BSP_BTN_OK) {
-        ui_hide_detail(); /* M2：详情内长按改为 PTT */
       }
       continue;
     }
