@@ -1,0 +1,29 @@
+# 隐私与密钥
+.dev.vars
+*.pem
+*.key
+.env
+.env.*
+
+# Node / Worker
+node_modules/
+.wrangler/
+.dev.vars.*
+!.dev.vars.example
+dist/
+coverage/
+
+# ESP-IDF 固件
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/dependencies.lock
+firmware/managed_components/
+firmware/main/managed_components/
+
+# 编辑器/系统
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store

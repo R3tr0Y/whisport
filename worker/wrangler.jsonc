@@ -1,0 +1,53 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ai-passport-board",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-01",
+
+  // 统一部署：Worker 承载 /api/* 与 /ws/*，其余路径回落到静态管理后台（web/public）。
+  // 也可将 web/public 单独发布到 Pages，二者完全独立（见 docs/deployment.md）。
+  "assets": {
+    "directory": "../web/public"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ai-passport-board",
+      // 部署前执行 `wrangler d1 create ai-passport-board` 并回填真实 id
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "kv_namespaces": [
+    {
+      "binding": "CACHE",
+      // 部署前执行 `wrangler kv namespace create CACHE` 并回填真实 id
+      "id": "00000000000000000000000000000000"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "PRESENCE", "class_name": "PresenceDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["PresenceDO"] }
+  ],
+
+  "triggers": {
+    "crons": ["17 * * * *"]
+  },
+
+  // 本地开发/测试默认值；生产部署务必用 `wrangler secret put` 覆盖（secret 优先于 vars）
+  "vars": {
+    "ADMIN_TOKEN": "dev-admin-token",
+    "SECRET_ENC_KEY": "11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff"
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}

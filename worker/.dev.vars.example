@@ -1,0 +1,5 @@
+# 复制为 .dev.vars 供本地 `wrangler dev` 使用（.dev.vars 已被 gitignore）
+# 生产环境请使用: wrangler secret put ADMIN_TOKEN / SECRET_ENC_KEY
+ADMIN_TOKEN=change-me-local-admin-token
+# 32 字节 AES-256 密钥，64 个 hex 字符
+SECRET_ENC_KEY=11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff

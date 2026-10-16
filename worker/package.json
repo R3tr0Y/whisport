@@ -1,0 +1,20 @@
+{
+  "name": "ai-passport-board-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "db:local": "wrangler d1 migrations apply ai-passport-board --local",
+    "db:remote": "wrangler d1 migrations apply ai-passport-board --remote",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.8.0",
+    "@cloudflare/workers-types": "^4.20260901.0",
+    "typescript": "^5.6.0",
+    "vitest": "~3.0.0",
+    "wrangler": "^4.0.0"
+  }
+}
