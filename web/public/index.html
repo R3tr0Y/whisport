@@ -1,1 +1,37 @@
-<!doctype html><html><head><meta charset="utf-8"><title>whisport</title></head><body>placeholder</body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Whisport · 管理后台</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">◈</span> Whisport <small>公告板 · 对讲管理台</small></div>
+    <nav id="nav">
+      <button data-view="devices">设备</button>
+      <button data-view="pairing">配对码</button>
+      <button data-view="announcements">公告</button>
+      <button data-view="groups">分组</button>
+      <button data-view="audit">审计</button>
+    </nav>
+    <button id="btn-logout" class="ghost" hidden>退出登录</button>
+  </header>
+
+  <main id="view" class="container"></main>
+
+  <div id="login-overlay" class="overlay" hidden>
+    <form id="login-form" class="card login-card">
+      <h2>管理员登录</h2>
+      <p class="muted">输入管理令牌（ADMIN_TOKEN）</p>
+      <input id="login-token" type="password" placeholder="管理令牌" autocomplete="current-password" required>
+      <button type="submit" class="primary">进入</button>
+      <p id="login-error" class="error" hidden>令牌无效</p>
+    </form>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>
