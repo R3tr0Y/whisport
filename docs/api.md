@@ -6,7 +6,7 @@
 
 - 时间戳一律 unix epoch **秒**
 - 响应为 JSON；错误统一为 `{"error":{"code":"…","message":"…"}}`
-- 限速：匿名端点按 IP 限速（认领 10 次/时、重激活 POST 10 次/时 / GET 60 次/时）
+- 限速：认领按 IP 10 次/时；重激活 POST 按 MAC 30 次/时、GET 按 MAC 60 次/时；未知 MAC 发起重激活额外按 IP 20 次/时
 
 ## 鉴权
 
@@ -36,6 +36,8 @@ v1\n{device_id}\n{ts}\n{nonce}\n{METHOD}\n{path}
 ```
 
 `path` 为不含 query 的 URL 路径（如 `/api/announcements`）。签名密钥为认领时下发的 `device_secret`（64 hex）。
+
+`GET /api/announcements` 响应按 20KB 体积预算裁剪（升序截尾），游标仍指向已见最大 id，设备次轮续拉。
 
 错误码：`missing_auth_headers` / `stale_timestamp` / `unknown_device` / `bad_signature` / `replayed_nonce` / `suspended`。
 

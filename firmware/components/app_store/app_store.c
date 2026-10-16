@@ -69,3 +69,36 @@ void app_store_set_last_read(int64_t id) {
   nvs_set_i64(s_nvs, "last_read", id);
   nvs_commit(s_nvs);
 }
+
+esp_err_t app_store_set_wifi(const char *ssid, const char *pass) {
+  esp_err_t err = nvs_set_str(s_nvs, "wifi_ssid", ssid);
+  if (err == ESP_OK) err = nvs_set_str(s_nvs, "wifi_pass", pass ? pass : "");
+  if (err == ESP_OK) err = nvs_commit(s_nvs);
+  return err;
+}
+
+bool app_store_get_wifi(char *ssid, size_t ssid_len, char *pass, size_t pass_len) {
+  if (nvs_get_str(s_nvs, "wifi_ssid", ssid, &ssid_len) != ESP_OK || ssid[0] == '\0') {
+    return false;
+  }
+  if (nvs_get_str(s_nvs, "wifi_pass", pass, &pass_len) != ESP_OK) {
+    pass[0] = '\0'; /* 开放网络 */
+  }
+  return true;
+}
+
+void app_store_clear_wifi(void) {
+  nvs_erase_key(s_nvs, "wifi_ssid");
+  nvs_erase_key(s_nvs, "wifi_pass");
+  nvs_commit(s_nvs);
+}
+
+esp_err_t app_store_set_label(const char *label) {
+  esp_err_t err = nvs_set_str(s_nvs, "label", label);
+  if (err == ESP_OK) err = nvs_commit(s_nvs);
+  return err;
+}
+
+bool app_store_get_label(char *buf, size_t len) {
+  return nvs_get_str(s_nvs, "label", buf, &len) == ESP_OK && buf[0] != '\0';
+}

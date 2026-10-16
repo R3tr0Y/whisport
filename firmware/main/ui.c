@@ -33,6 +33,17 @@ static lv_obj_t *s_d_body_box;
 static lv_obj_t *s_d_body;
 static int s_sel = 0;            /* 列表高亮索引 */
 static int s_rendered = 0;       /* 当前渲染的卡片数 */
+
+/* 主菜单与信息屏 */
+#define MENU_MAX 6
+static lv_obj_t *s_menu;
+static lv_obj_t *s_menu_rows[MENU_MAX];
+static lv_obj_t *s_info;
+static lv_obj_t *s_info_title;
+static lv_obj_t *s_info_lines[4];
+static lv_obj_t *s_empty; /* 空列表提示 */
+static int s_menu_sel = 0;
+static ui_screen_t s_screen = UI_SCR_MENU;
 static struct {
   lv_obj_t *card;
   lv_obj_t *dot;
@@ -147,6 +158,14 @@ void ui_init(void) {
     lv_obj_add_flag(s_cards[i].card, LV_OBJ_FLAG_HIDDEN);
   }
 
+  /* 空列表提示（覆盖在列表区中央） */
+  s_empty = lv_label_create(s_list);
+  lv_label_set_text(s_empty, "No announcements yet");
+  lv_obj_set_style_text_color(s_empty, lv_color_hex(C_MUTED), 0);
+  lv_obj_set_style_text_font(s_empty, &lv_font_montserrat_14, 0);
+  lv_obj_align(s_empty, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_add_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
+
   /* ---- 详情视图（覆盖列表区，默认隐藏）---- */
   s_detail = lv_obj_create(scr);
   lv_obj_remove_style_all(s_detail);
@@ -194,7 +213,141 @@ void ui_init(void) {
 
   lv_obj_add_flag(s_detail, LV_OBJ_FLAG_HIDDEN);
 
+  /* ---- 主菜单 ---- */
+  s_menu = lv_obj_create(scr);
+  lv_obj_remove_style_all(s_menu);
+  lv_obj_set_size(s_menu, 224, 252);
+  lv_obj_align(s_menu, LV_ALIGN_BOTTOM_MID, 0, -6);
+  lv_obj_set_flex_flow(s_menu, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(s_menu, 8, 0);
+  lv_obj_set_scroll_dir(s_menu, LV_DIR_NONE);
+
+  for (int i = 0; i < MENU_MAX; i++) {
+    s_menu_rows[i] = lv_obj_create(s_menu);
+    lv_obj_set_width(s_menu_rows[i], 224);
+    lv_obj_set_height(s_menu_rows[i], 44);
+    lv_obj_set_style_bg_color(s_menu_rows[i], lv_color_hex(C_CARD), 0);
+    lv_obj_set_style_radius(s_menu_rows[i], 10, 0);
+    lv_obj_set_style_border_width(s_menu_rows[i], 0, 0);
+    lv_obj_set_style_pad_all(s_menu_rows[i], 8, 0);
+    lv_obj_set_scroll_dir(s_menu_rows[i], LV_DIR_NONE);
+
+    lv_obj_t *lab = lv_label_create(s_menu_rows[i]);
+    lv_label_set_text(lab, "");
+    lv_obj_set_style_text_color(lab, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_font(lab, &lv_font_montserrat_14, 0);
+    lv_obj_align(lab, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_add_flag(s_menu_rows[i], LV_OBJ_FLAG_HIDDEN);
+  }
+
+  /* ---- 信息屏（设置/占位/关于 复用）---- */
+  s_info = lv_obj_create(scr);
+  lv_obj_remove_style_all(s_info);
+  lv_obj_set_size(s_info, 224, 252);
+  lv_obj_align(s_info, LV_ALIGN_BOTTOM_MID, 0, -6);
+  lv_obj_set_style_bg_color(s_info, lv_color_hex(C_CARD), 0);
+  lv_obj_set_style_bg_opa(s_info, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(s_info, 0, 0);
+  lv_obj_set_style_radius(s_info, 10, 0);
+  lv_obj_set_style_pad_all(s_info, 12, 0);
+  lv_obj_set_scroll_dir(s_info, LV_DIR_NONE);
+
+  s_info_title = lv_label_create(s_info);
+  lv_label_set_text(s_info_title, "");
+  lv_obj_set_style_text_color(s_info_title, lv_color_hex(C_ACCENT), 0);
+  lv_obj_set_style_text_font(s_info_title, &lv_font_montserrat_20, 0);
+  lv_obj_align(s_info_title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  for (int i = 0; i < 4; i++) {
+    s_info_lines[i] = lv_label_create(s_info);
+    lv_label_set_long_mode(s_info_lines[i], LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_info_lines[i], 200);
+    lv_label_set_text(s_info_lines[i], "");
+    lv_obj_set_style_text_color(s_info_lines[i], lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_font(s_info_lines[i], &lv_font_montserrat_14, 0);
+    lv_obj_align(s_info_lines[i], LV_ALIGN_TOP_LEFT, 0, 32 + i * 36);
+  }
+  lv_obj_add_flag(s_info, LV_OBJ_FLAG_HIDDEN);
+
   unlock();
+}
+
+/* 只显示指定容器（其余全部隐藏），杜绝叠加 */
+static void show_only(lv_obj_t *target) {
+  lv_obj_t *all[] = { s_menu, s_list, s_detail, s_info };
+  for (size_t i = 0; i < sizeof(all) / sizeof(all[0]); i++) {
+    if (all[i] == target) lv_obj_clear_flag(all[i], LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(all[i], LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+ui_screen_t ui_current_screen(void) {
+  return s_screen;
+}
+
+void ui_menu_highlight_locked(int sel); /* 内部：需持锁调用 */
+
+void ui_show_ann_list(void) {
+  if (!with_lock(300)) return;
+  show_only(s_list);
+  s_screen = UI_SCR_ANN;
+  unlock();
+}
+
+void ui_show_menu(const char *const *items, int count, int sel, int unread) {
+  if (!with_lock(500)) return;
+  (void)unread;
+  if (count > MENU_MAX) count = MENU_MAX;
+  s_menu_sel = sel;
+  for (int i = 0; i < MENU_MAX; i++) {
+    if (i < count) {
+      lv_obj_t *lab = lv_obj_get_child(s_menu_rows[i], 0);
+      lv_label_set_text(lab, items[i]);
+      lv_obj_set_style_text_color(lab, lv_color_hex(C_TEXT), 0);
+      lv_obj_clear_flag(s_menu_rows[i], LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(s_menu_rows[i], LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+  ui_menu_highlight_locked(s_menu_sel);
+  show_only(s_menu);
+  s_screen = UI_SCR_MENU;
+  unlock();
+}
+
+void ui_menu_highlight_locked(int sel) {
+  s_menu_sel = sel;
+  for (int i = 0; i < MENU_MAX; i++) {
+    bool on = (i == sel) && !lv_obj_has_flag(s_menu_rows[i], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_border_width(s_menu_rows[i], on ? 2 : 0, 0);
+    lv_obj_set_style_border_color(s_menu_rows[i], lv_color_hex(C_ACCENT), 0);
+  }
+}
+
+void ui_menu_highlight(int sel) {
+  if (!with_lock(300)) return;
+  ui_menu_highlight_locked(sel);
+  unlock();
+}
+
+int ui_menu_selected(void) {
+  return s_menu_sel;
+}
+
+void ui_show_info(const char *title, const char *l1, const char *l2, const char *l3, const char *l4) {
+  if (!with_lock(500)) return;
+  lv_label_set_text(s_info_title, title);
+  const char *lines[4] = { l1, l2, l3, l4 };
+  for (int i = 0; i < 4; i++) {
+    lv_label_set_text(s_info_lines[i], lines[i] ? lines[i] : "");
+  }
+  show_only(s_info);
+  s_screen = UI_SCR_INFO;
+  unlock();
+}
+
+void ui_show_intercom(void) {
+  ui_show_info("Intercom", "PTT voice calls arrive in M2.", "Planned: persistent channels,", "1:1 calls, PIN-locked rooms.", NULL);
 }
 
 /* ---- 列表选择 ---- */
@@ -240,16 +393,13 @@ void ui_show_detail(const app_announcement_t *a) {
   lv_label_set_text(s_d_meta, meta);
   lv_label_set_text(s_d_body, a->body[0] ? a->body : "(no content)");
   lv_obj_scroll_to_y(s_d_body_box, 0, LV_ANIM_OFF);
-  lv_obj_add_flag(s_list, LV_OBJ_FLAG_HIDDEN); /* 隐藏列表，杜绝叠加 */
-  lv_obj_clear_flag(s_detail, LV_OBJ_FLAG_HIDDEN);
+  show_only(s_detail); /* 列表随之隐藏，杜绝叠加 */
+  s_screen = UI_SCR_DETAIL;
   unlock();
 }
 
 void ui_hide_detail(void) {
-  if (!with_lock(300)) return;
-  lv_obj_add_flag(s_detail, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_clear_flag(s_list, LV_OBJ_FLAG_HIDDEN);
-  unlock();
+  ui_show_ann_list();
 }
 
 bool ui_detail_visible(void) {
@@ -329,6 +479,11 @@ void ui_show_announcements(const app_announcement_list_t *list, long last_read) 
   }
 
   s_rendered = (int)n;
+  if (s_rendered == 0) {
+    lv_obj_clear_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
+  }
   if (s_sel > s_rendered - 1) s_sel = s_rendered > 0 ? s_rendered - 1 : 0;
   apply_highlight();
   unlock();

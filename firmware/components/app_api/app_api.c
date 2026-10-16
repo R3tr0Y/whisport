@@ -18,9 +18,13 @@ static esp_err_t do_request(const char *url, const char *method, const char *jso
                             const char *sig_headers[4][2], app_api_resp_t *out) {
   memset(out, 0, sizeof(*out));
 
+  esp_http_client_method_t http_method = HTTP_METHOD_GET;
+  if (strcmp(method, "POST") == 0) http_method = HTTP_METHOD_POST;
+  else if (strcmp(method, "PATCH") == 0) http_method = HTTP_METHOD_PATCH;
+
   esp_http_client_config_t cfg = {
       .url = url,
-      .method = strcmp(method, "POST") == 0 ? HTTP_METHOD_POST : HTTP_METHOD_GET,
+      .method = http_method,
       .crt_bundle_attach = esp_crt_bundle_attach,
       .timeout_ms = 15000,
       .buffer_size = 2048,   /* 无 PSRAM，压缩缓冲（规划 §7.3） */
@@ -116,6 +120,25 @@ esp_err_t app_api_signed_get(const char *path_query, app_api_resp_t *out) {
   char url[MAX_URL];
   snprintf(url, sizeof(url), "%s%s", CONFIG_WS_SERVER_URL, path_query);
   return do_request(url, "GET", NULL, headers, out);
+}
+
+esp_err_t app_api_signed_patch(const char *path, const char *json_body, app_api_resp_t *out) {
+  if (!app_identity_has_secret()) return ESP_ERR_INVALID_STATE;
+
+  char ts[16], nonce[17], sig[65], device_id[APP_DEVICE_ID_LEN];
+  ESP_RETURN_ON_ERROR(app_identity_sign("PATCH", path, ts, nonce, sig), TAG, "sign");
+  app_identity_device_id(device_id);
+
+  const char *headers[4][2] = {
+      {"X-Device-Id", device_id},
+      {"X-Timestamp", ts},
+      {"X-Nonce", nonce},
+      {"X-Signature", sig},
+  };
+
+  char url[MAX_URL];
+  snprintf(url, sizeof(url), "%s%s", CONFIG_WS_SERVER_URL, path);
+  return do_request(url, "PATCH", json_body, headers, out);
 }
 
 esp_err_t app_api_anon_post(const char *path, const char *json_body, app_api_resp_t *out) {

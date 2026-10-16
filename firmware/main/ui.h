@@ -24,6 +24,7 @@ typedef struct {
   char body[ANN_BODY_MAX];
   int priority;
   long created_at;
+  long expires_at; /* 0 = 永不过期 */
 } app_announcement_t;
 
 typedef struct {
@@ -50,5 +51,21 @@ void ui_show_detail(const app_announcement_t *a); /* 打开详情（标题+正�
 void ui_hide_detail(void);
 bool ui_detail_visible(void);
 void ui_scroll_detail(int dir);         /* 详情内正文滚动：dir>0 向下 */
+void ui_show_ann_list(void);            /* 切到公告列表屏 */
+
+/* ---- 屏幕与菜单 ---- */
+typedef enum {
+  UI_SCR_MENU,
+  UI_SCR_ANN,
+  UI_SCR_DETAIL,
+  UI_SCR_INFO,
+} ui_screen_t;
+
+ui_screen_t ui_current_screen(void);
+void ui_show_menu(const char *const *items, int count, int sel, int unread);
+void ui_menu_highlight(int sel);
+int ui_menu_selected(void);
+void ui_show_info(const char *title, const char *l1, const char *l2, const char *l3, const char *l4);
+void ui_show_intercom(void);
 
 #endif /* WHISPORT_UI_H */

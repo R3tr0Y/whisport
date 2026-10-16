@@ -19,8 +19,11 @@ typedef struct {
   size_t body_len;
 } app_api_resp_t;
 
-/* GET（签名） */
+/* 签名 GET */
 esp_err_t app_api_signed_get(const char *path_query, app_api_resp_t *out);
+
+/* 签名 PATCH（改名等） */
+esp_err_t app_api_signed_patch(const char *path, const char *json_body, app_api_resp_t *out);
 
 /* 匿名 POST，json_body 为请求体 */
 esp_err_t app_api_anon_post(const char *path, const char *json_body, app_api_resp_t *out);

@@ -69,7 +69,9 @@ export async function reactivateRequest(ctx: Ctx): Promise<Response> {
 
   let dev = await getDevice(ctx.env, deviceId);
   if (!dev) {
-    // 未知 MAC：幂等创建待认领记录（24h 后由 Cron 清理），提示走配对码流程
+    // I8：未知 MAC 额外按 IP 限速，防止随机 MAC 灌库（清理是惰性的）
+    await rateLimit(ctx.env, ctx.req, "reactivate-unknown", 20, 3600);
+    // 未知 MAC：幂等创建待认领记录（24h 后由清理逻辑删除），提示走配对码流程
     await ctx.env.DB.prepare(
       "INSERT INTO devices (device_id, status, created_at) VALUES (?, 'pending', ?) " +
         "ON CONFLICT(device_id) DO NOTHING",

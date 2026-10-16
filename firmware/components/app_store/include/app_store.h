@@ -27,4 +27,13 @@ void app_store_set_cursor(int64_t cursor);
 int64_t app_store_get_last_read(void);
 void app_store_set_last_read(int64_t id);
 
+/* Wi-Fi 凭据（配网页写入；Kconfig 值仅在 NVS 为空时作开发默认种子） */
+esp_err_t app_store_set_wifi(const char *ssid, const char *pass);
+bool app_store_get_wifi(char *ssid, size_t ssid_len, char *pass, size_t pass_len);
+void app_store_clear_wifi(void);
+
+/* 设备显示名本地缓存（服务端 PATCH 成功后回写） */
+esp_err_t app_store_set_label(const char *label);
+bool app_store_get_label(char *buf, size_t len);
+
 #endif /* APP_STORE_H */

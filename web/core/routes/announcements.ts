@@ -24,17 +24,30 @@ export async function listForDevice(ctx: Ctx): Promise<Response> {
   if (!Number.isInteger(since) || since < 0) {
     throw new ApiError(400, "bad_request", "since must be a non-negative integer");
   }
+  // ASC + 20KB 预算裁剪（S3）：超限时丢的是"更新的尾部"，游标仍指向已见最大值，
+  // 设备下轮继续拉取，不会永久跳过任何公告
   const { results } = await ctx.env.DB.prepare(
     `SELECT a.id, a.title, a.body, a.priority, a.created_at, a.expires_at
      FROM announcements a WHERE a.id > ?3 AND ${VIS}
-     ORDER BY a.id DESC LIMIT 50`,
+     ORDER BY a.id ASC LIMIT 50`,
   )
     .bind(deviceId, nowSec(), since)
     .all();
-  const cursor = results.length
-    ? Math.max(...results.map((r) => Number((r as { id: number }).id)))
+
+  const MAX_BYTES = 20 * 1024;
+  const items: typeof results = [];
+  let bytes = 0;
+  for (const row of results) {
+    const r = row as { title?: string; body?: string };
+    const size = (r.title?.length ?? 0) + (r.body?.length ?? 0);
+    if (items.length > 0 && bytes + size > MAX_BYTES) break;
+    bytes += size;
+    items.push(row);
+  }
+  const cursor = items.length
+    ? Math.max(...items.map((r) => Number((r as { id: number }).id)))
     : since;
-  return json({ items: results, cursor });
+  return json({ items, cursor });
 }
 
 /** POST /api/admin/announcements — 发布（管理员），body: {title, body, priority?, expires_at?, targets} */
