@@ -39,7 +39,8 @@ bool app_store_get_secret(char *buf, size_t buflen) {
   if (buflen < APP_SECRET_HEX_LEN) return false;
   size_t len = buflen;
   if (nvs_get_str(s_nvs, "secret", buf, &len) != ESP_OK) return false;
-  return len == 64;
+  /* 注意：nvs_get_str 返回的 len 含结尾 NUL（64 字符密钥 → len=65），用 strlen 判断 */
+  return strlen(buf) == 64;
 }
 
 void app_store_clear_secret(void) {

@@ -76,8 +76,8 @@ esp_err_t app_identity_sign(const char *method, const char *path,
   char device_id[APP_DEVICE_ID_LEN];
   app_identity_device_id(device_id);
 
-  /* ts（秒）与 nonce（8 字节随机） */
-  snprintf(ts, 16, "%lld", (long long)time(NULL));
+  /* ts（秒）与 nonce（8 字节随机）；newlib-nano 不支持 %lld */
+  snprintf(ts, 16, "%d", (int)time(NULL));
   uint8_t raw[8];
   esp_fill_random(raw, sizeof(raw));
   bytes_to_hex(raw, 8, nonce);

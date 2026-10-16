@@ -162,8 +162,9 @@ static int do_sync_announcements(void) {
 
   ui_set_syncing(true);
   char path[96];
-  snprintf(path, sizeof(path), "/api/announcements?since=%lld",
-           (long long)app_store_get_cursor());
+  /* newlib-nano 不支持 %lld（会打出字面量 "ld"）——统一用 %d */
+  snprintf(path, sizeof(path), "/api/announcements?since=%d",
+           (int)app_store_get_cursor());
 
   app_api_resp_t r;
   esp_err_t err = app_api_signed_get(path, &r);
