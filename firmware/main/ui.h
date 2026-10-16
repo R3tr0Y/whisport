@@ -68,6 +68,11 @@ int ui_menu_selected(void);
 void ui_show_info(const char *title, const char *l1, const char *l2, const char *l3, const char *l4);
 void ui_show_intercom(void);
 
+/* 像素风开机画面 / 屏保（任意键退出，回到进入前的屏幕） */
+void ui_show_splash(void);
+void ui_hide_splash(void);
+bool ui_splash_visible(void);
+
 /* 诊断：LVGL 内存池状态 */
 void ui_mem_info(char *buf, size_t len);
 

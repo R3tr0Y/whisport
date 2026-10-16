@@ -206,6 +206,46 @@ def main():
         if ip_addr:
             print("== 6. 局域网配网页接口 ==")
             run_portal_checks(dev)
+
+        print("== 7. UI 导航与屏保（key 注入）==")
+        dev.buf = ""
+
+        def uitree():
+            dev.buf = ""
+            dev.send("uitree")
+            out = dev.read(2.5)
+            m = re.search(r"screen=(\w+) splash=(\d)\r?\n(.*)", out, re.S)
+            return m
+
+        def key(seq, wait=1.2):
+            for k in seq:
+                dev.send(f"key {k}")
+                time.sleep(wait)
+
+        m = uitree()
+        check("启动后为主菜单", m and m.group(1) == "MENU", m.group(0)[:80] if m else "no uitree output")
+        key(["down", "ok"])            # 主菜单 → 公告列表
+        m = uitree()
+        check("进入公告列表", m and m.group(1) == "ANN", m.group(1) if m else "?")
+        if m and m.group(1) == "ANN":
+            key(["ok"])                # 打开详情
+            m = uitree()
+            check("打开公告详情", m and m.group(1) == "DETAIL", m.group(1) if m else "?")
+            key(["ok"])                # 返回列表
+            key(["double"])            # 回主菜单
+            m = uitree()
+            check("返回主菜单", m and m.group(1) == "MENU", m.group(1) if m else "?")
+        check("菜单文案完整（无缺字）", m and "Announcements" in m.group(3), "")
+
+        print("    等 65s 触发屏保…")
+        time.sleep(65)
+        m = uitree()
+        check("空闲后进入屏保（像素启动画面）", m and m.group(1) == "SPLASH" or (m and "splash=1" in m.group(0)),
+              m.group(0)[:60] if m else "?")
+        dev.send("key ok")
+        time.sleep(1.5)
+        m = uitree()
+        check("按键退出屏保", m and "splash=0" in m.group(0), m.group(0)[:60] if m else "?")
     finally:
         dev.close()
 

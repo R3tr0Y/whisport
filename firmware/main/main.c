@@ -324,6 +324,7 @@ static int seed_recent_announcements(void) {
 /* ---------------- 重新激活（无凭证自动恢复） ---------------- */
 
 static int64_t s_last_react_post_us = -REACT_POST_INTERVAL_US;
+static TaskHandle_t s_sync_task = NULL; /* 同步任务句柄：按键只发通知，不阻塞输入任务 */
 
 static void try_reactivate(void) {
   char mac[13];
@@ -369,10 +370,13 @@ typedef struct {
   bsp_btn_ev_t ev;
 } key_evt_t;
 
-/* 背光空闲管理（I6）：30s 调暗 / 120s 熄屏，任意按键唤醒 */
-#define BL_DIM_AFTER_US (30LL * 1000 * 1000)
-#define BL_OFF_AFTER_US (120LL * 1000 * 1000)
+/* 背光与屏保的空闲节奏 */
+#define BL_DIM_AFTER_US (30LL * 1000 * 1000)   /* 30s 调暗 */
+#define SAVER_AFTER_US (60LL * 1000 * 1000)    /* 60s 进屏保（像素风开机画面） */
+#define BL_OFF_AFTER_US (150LL * 1000 * 1000)  /* 150s 熄屏 */
+#define WAKE_SWALLOW_US (700LL * 1000)         /* 唤醒/退屏保后抑制窗：吞掉同一次按压的后续事件 */
 static int64_t s_last_activity_us = 0;
+static int64_t s_wake_until_us = 0;
 static int s_bl = 100;
 
 static void bl_set(int pct) {
@@ -399,17 +403,47 @@ static void input_task(void *arg) {
   for (;;) {
     if (xQueueReceive(s_keys, &e, pdMS_TO_TICKS(5000)) != pdTRUE) {
       int64_t idle = esp_timer_get_time() - s_last_activity_us;
-      if (idle > BL_OFF_AFTER_US) bl_set(0);
-      else if (idle > BL_DIM_AFTER_US) bl_set(20);
+      if (idle > BL_OFF_AFTER_US) {
+        bl_set(0);
+      } else if (idle > SAVER_AFTER_US) {
+        if (!ui_splash_visible()) {
+          ui_show_splash();
+          bl_set(40); /* 屏保常亮降低亮度 */
+        }
+      } else if (idle > BL_DIM_AFTER_US) {
+        if (!ui_splash_visible()) bl_set(20);
+      }
       continue;
     }
-    if (s_bl != 100) { /* 熄屏/调暗时首次按键仅唤醒，不触发操作 */
-      bool was_off = (s_bl == 0);
-      bl_set(100);
-      s_last_activity_us = esp_timer_get_time();
-      if (was_off) continue;
+    /* 熄屏/屏保/调暗的按键语义：
+     *  - 熄屏时按任意键 → 点亮并进入屏保（不执行按键），再次按键才退出屏保
+     *  - 屏保中按任意键 → 退出屏保回到原界面（不执行按键）
+     *  - 仅调暗（未熄屏/无屏保）→ 恢复亮度，该按键照常生效
+     * 一次物理按压会依次产生 PRESS→CLICK→RELEASE，唤醒类按键必须用抑制窗吞掉全部后续事件 */
+    {
+      int64_t now = esp_timer_get_time();
+      bool from_off = (s_bl == 0);
+      bool from_splash = ui_splash_visible();
+      if (from_off || from_splash || s_bl != 100) {
+        bl_set(100);
+        s_last_activity_us = now;
+        if (from_off) {
+          ui_show_splash(); /* 熄屏唤醒 → 屏保界面 */
+          s_wake_until_us = now + WAKE_SWALLOW_US;
+          continue;
+        }
+        if (from_splash) {
+          ui_hide_splash(); /* 屏保中按键 → 退出屏保 */
+          s_wake_until_us = now + WAKE_SWALLOW_US;
+          continue;
+        }
+      }
+      if (now < s_wake_until_us) {
+        s_last_activity_us = now;
+        continue; /* 唤醒/退屏保同一按压的尾随事件：吞掉 */
+      }
+      s_last_activity_us = now;
     }
-    s_last_activity_us = esp_timer_get_time();
 
     ui_screen_t scr = ui_current_screen();
 
@@ -446,9 +480,10 @@ static void input_task(void *arg) {
           if (e.btn != BSP_BTN_OK) break;
           switch (s_menu_sel) {
             case MENU_ANN:
-              if (s_count == 0) app_sync_announcements(); /* 空列表（离线启动过）时补拉 */
               render_announcements();
               ui_show_ann_list();
+              /* 缓存为空（离线启动过）：通知同步任务后台补拉，输入任务不阻塞 */
+              if (s_count == 0 && s_sync_task) xTaskNotifyGive(s_sync_task);
               break;
             case MENU_INTERCOM:
               ui_show_intercom();
@@ -492,7 +527,8 @@ static void input_task(void *arg) {
         back_to_menu();
         break;
       case BSP_BTN_LONG:
-        if (e.btn == BSP_BTN_OK) app_sync_announcements();
+        /* 长按 OK：请求立即同步（后台执行，输入任务不阻塞；M2 通话中为 PTT） */
+        if (e.btn == BSP_BTN_OK && s_sync_task) xTaskNotifyGive(s_sync_task);
         break;
       default:
         break;
@@ -504,6 +540,7 @@ static void input_task(void *arg) {
 
 static void sync_task(void *arg) {
   (void)arg;
+  s_sync_task = xTaskGetCurrentTaskHandle();
   bool ap_stopped = !net_prov_ap_mode();
   int64_t connected_since_us = 0;
 
@@ -513,6 +550,8 @@ static void sync_task(void *arg) {
       app_net_wait_connected(portMAX_DELAY);
       connected_since_us = esp_timer_get_time();
       app_refresh_status();
+      /* 配网后联网成功：立即进入主菜单（设置页仍可在局域网 http://IP 访问） */
+      if (net_prov_ap_mode() && ui_current_screen() == UI_SCR_INFO) back_to_menu();
     }
     if (app_identity_has_secret()) {
       if (s_count == 0) seed_recent_announcements(); /* 开机/刷机后种入最近公告 */
@@ -528,8 +567,10 @@ static void sync_task(void *arg) {
       ESP_LOGI(TAG, "provisioning ap stopped");
       if (ui_current_screen() == UI_SCR_INFO) back_to_menu();
     }
-    /* I7：±60s 抖动，避免多设备同时上电打同一时刻的同步（惊群） */
-    vTaskDelay(pdMS_TO_TICKS(SYNC_INTERVAL_MS + (esp_random() % 60000)));
+    /* I7：±60s 抖动，避免多设备同时上电打同一时刻的同步（惊群）；
+     * 按键（长按同步/进入空列表）可经任务通知提前唤醒 */
+    uint32_t tmo = SYNC_INTERVAL_MS + (esp_random() % 60000);
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(tmo));
   }
 }
 
@@ -604,27 +645,37 @@ static int cmd_uitree(int argc, char **argv) {
   return 0;
 }
 
-/* 开发/测试用：注入按键事件（免手动） */
+/* 开发/测试用：注入按键事件（免手动）
+ * 用法：key <up|down|ok> [press|click|double|long]  或  key <press|click|double|long>（等价 OK + 该事件） */
 static int cmd_key(int argc, char **argv) {
   if (argc < 2) {
-    printf("用法: key <up|down|ok> [press|click|double|long]\n");
+    printf("用法: key <up|down|ok> [press|click|double|long] | key <press|click|double|long>\n");
     return 1;
   }
+  static const struct { const char *n; bsp_btn_t v; } btns[] = {
+      { "up", BSP_BTN_UP }, { "down", BSP_BTN_DOWN }, { "ok", BSP_BTN_OK } };
+  static const struct { const char *n; bsp_btn_ev_t v; } evs[] = {
+      { "press", BSP_BTN_PRESS }, { "click", BSP_BTN_CLICK },
+      { "double", BSP_BTN_DOUBLE }, { "long", BSP_BTN_LONG } };
+
   bsp_btn_t btn = BSP_BTN_OK;
-  if (strcmp(argv[1], "up") == 0) btn = BSP_BTN_UP;
-  else if (strcmp(argv[1], "down") == 0) btn = BSP_BTN_DOWN;
+  bool btn_set = false;
+  for (size_t i = 0; i < sizeof(btns) / sizeof(btns[0]); i++) {
+    if (strcmp(argv[1], btns[i].n) == 0) { btn = btns[i].v; btn_set = true; break; }
+  }
   bsp_btn_ev_t ev = BSP_BTN_CLICK;
-  if (argc > 2) {
-    if (strcmp(argv[2], "press") == 0) ev = BSP_BTN_PRESS;
-    else if (strcmp(argv[2], "double") == 0) ev = BSP_BTN_DOUBLE;
-    else if (strcmp(argv[2], "long") == 0) ev = BSP_BTN_LONG;
+  const char *ev_arg = btn_set ? (argc > 2 ? argv[2] : NULL) : argv[1];
+  if (ev_arg) {
+    for (size_t i = 0; i < sizeof(evs) / sizeof(evs[0]); i++) {
+      if (strcmp(ev_arg, evs[i].n) == 0) { ev = evs[i].v; break; }
+    }
   }
   key_evt_t e = { .btn = btn, .ev = ev };
   if (xQueueSend(s_keys, &e, pdMS_TO_TICKS(100)) != pdTRUE) {
     printf("key queue full\n");
     return 1;
   }
-  printf("key injected: %s %s\n", argv[1], argc > 2 ? argv[2] : "click");
+  printf("key injected: btn=%s ev=%s\n", btn_set ? argv[1] : "ok", ev_arg ? ev_arg : "click");
   return 0;
 }
 
@@ -690,6 +741,8 @@ void app_main(void) {
     ui_init();
     app_refresh_status();
     bsp_display_backlight(100); /* BSP 初始化背光为 0，必须显式点亮 */
+    ui_show_splash();           /* 开机：像素风启动画面 */
+    vTaskDelay(pdMS_TO_TICKS(2500));
   }
   ESP_ERROR_CHECK(bsp_battery_init());
 
