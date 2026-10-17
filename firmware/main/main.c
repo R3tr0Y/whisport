@@ -25,6 +25,7 @@
 #include "esp_console.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -730,6 +731,44 @@ static int cmd_cache(int argc, char **argv) {
   return 0;
 }
 
+/* 启动记录环：每次开机把 复位原因+电池电压/SOC 写入 NVS（电池态无串口，事后取证用） */
+static void boot_record(void) {
+  nvs_handle_t h;
+  if (nvs_open_from_partition("storage", "diag", NVS_READWRITE, &h) != ESP_OK) return;
+  uint8_t idx = 0;
+  nvs_get_u8(h, "bidx", &idx);
+  char key[8], val[64];
+  snprintf(val, sizeof(val), "rst=%d mv=%d soc=%d", (int)esp_reset_reason(),
+           (int)bsp_battery_mv(), (int)bsp_battery_soc());
+  snprintf(key, sizeof(key), "b%u", idx);
+  nvs_set_str(h, key, val);
+  nvs_set_u8(h, "bidx", (idx + 1) % 8);
+  nvs_commit(h);
+  nvs_close(h);
+}
+
+static int cmd_boots(int argc, char **argv) {
+  (void)argc; (void)argv;
+  nvs_handle_t h;
+  if (nvs_open_from_partition("storage", "diag", NVS_READONLY, &h) != ESP_OK) {
+    printf("无启动记录\n");
+    return 0;
+  }
+  uint8_t idx = 0;
+  nvs_get_u8(h, "bidx", &idx);
+  printf("最近 8 次启动（最新在后，* = 当前）:\n");
+  for (int k = 0; k < 8; k++) {
+    char key[8], val[64] = "";
+    snprintf(key, sizeof(key), "b%u", (uint8_t)((idx + k) % 8));
+    size_t len = sizeof(val);
+    if (nvs_get_str(h, key, val, &len) == ESP_OK) {
+      printf("  %s%s\n", val, k == 7 ? " *" : "");
+    }
+  }
+  nvs_close(h);
+  return 0;
+}
+
 /* 开发/测试用：直接设置 Wi-Fi 凭据（正式用户走配网页） */
 static int cmd_wifi(int argc, char **argv) {
   if (argc < 2) {
@@ -764,6 +803,7 @@ static void console_init(void) {
       { .command = "key", .help = "key <up|down|ok> [press|click|double|long] — 注入按键", .func = cmd_key },
       { .command = "uitree", .help = "导出 LVGL 当前文本（缺字排查）", .func = cmd_uitree },
       { .command = "cache", .help = "查看公告本地缓存", .func = cmd_cache },
+      { .command = "boots", .help = "最近 8 次启动记录（复位原因+电池）", .func = cmd_boots },
   };
   for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
     esp_console_cmd_register(&cmds[i]);
@@ -797,6 +837,7 @@ void app_main(void) {
     vTaskDelay(pdMS_TO_TICKS(2500));
   }
   ESP_ERROR_CHECK(bsp_battery_init());
+  boot_record(); /* 取证：复位原因 + 电池电压（电池态无串口） */
 
   s_keys = xQueueCreate(8, sizeof(key_evt_t));
   ESP_ERROR_CHECK(bsp_button_init(on_key, NULL));
