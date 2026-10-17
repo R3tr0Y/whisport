@@ -38,7 +38,8 @@ static const char *TAG = "main";
 
 #define SYNC_INTERVAL_MS (5 * 60 * 1000)
 #define REACT_POST_INTERVAL_US (3600LL * 1000 * 1000)
-#define PROV_AP_GRACE_MS (120 * 1000) /* 联网后保留热点供用户完成配置的时长 */
+#define PROV_AP_GRACE_MS (120 * 1000)        /* 联网后保留热点供用户完成配置的时长 */
+#define OFFLINE_AP_FALLBACK_US (180LL * 1000 * 1000) /* 离线超过 3 分钟自动开配网热点 */
 
 /* ---------------- 公告本地缓存 ---------------- */
 
@@ -156,6 +157,19 @@ bool app_get_label(char *buf, size_t len) {
 
 const char *app_server_url(void) {
   return CONFIG_WS_SERVER_URL;
+}
+
+/* 离线回退开关（sync_task 持有；重配后重新武装，凭据错误可再次回退） */
+static bool s_fallback_armed = true;
+
+void app_wifi_apply(const char *ssid, const char *pass) {
+  if (net_prov_ap_mode()) {
+    /* 热点信道与目标路由不一致时 APSTA 无法关联：换配置必须先关热点 */
+    app_net_stop_ap();
+    net_prov_set_ap_mode(false);
+    s_fallback_armed = true; /* 若新凭据仍连不上，3 分钟后可再次回退 */
+  }
+  app_net_start_sta_creds(ssid, pass);
 }
 
 void app_refresh_status(void) {
@@ -541,35 +555,61 @@ static void input_task(void *arg) {
 static void sync_task(void *arg) {
   (void)arg;
   s_sync_task = xTaskGetCurrentTaskHandle();
-  bool ap_stopped = !net_prov_ap_mode();
+  bool ap_started = net_prov_ap_mode(); /* 是否由我们启动的热点（含离线回退） */
   int64_t connected_since_us = 0;
+  int64_t down_since_us = 0;
 
   for (;;) {
-    if (!app_net_is_connected()) {
+    if (app_net_is_connected()) {
+      if (!connected_since_us) {
+        connected_since_us = esp_timer_get_time();
+        app_refresh_status();
+        /* 配网/回退后联网成功：立即进入主菜单（设置页仍可在局域网 http://IP 访问） */
+        if (ap_started && ui_current_screen() == UI_SCR_INFO) back_to_menu();
+      }
+      down_since_us = 0;
+    } else {
       connected_since_us = 0;
-      app_net_wait_connected(portMAX_DELAY);
-      connected_since_us = esp_timer_get_time();
-      app_refresh_status();
-      /* 配网后联网成功：立即进入主菜单（设置页仍可在局域网 http://IP 访问） */
-      if (net_prov_ap_mode() && ui_current_screen() == UI_SCR_INFO) back_to_menu();
+      if (!down_since_us) down_since_us = esp_timer_get_time();
+      /* 离线兜底：超过 3 分钟连不上 → 自动开配网热点并显示设置屏。
+       * 覆盖路由器改密码/搬家等场景（否则局域网页面不可达且无串口，用户无从重配） */
+      if (s_fallback_armed && !net_prov_ap_mode() &&
+          esp_timer_get_time() - down_since_us > OFFLINE_AP_FALLBACK_US) {
+        ESP_LOGW(TAG, "offline >180s -> provisioning AP fallback");
+        net_prov_set_ap_mode(true);
+        app_net_start_ap(app_net_ap_ssid(), app_net_ap_pass());
+        ap_started = true;
+        s_fallback_armed = false;
+        app_show_setup_screen();
+      }
     }
-    if (app_identity_has_secret()) {
+    if (!app_net_is_connected()) {
+      /* 离线：不做网络动作（DNS/HTTPS 必失败），10s 后再查；只维护离线回退逻辑 */
+    } else if (app_identity_has_secret()) {
       if (s_count == 0) seed_recent_announcements(); /* 开机/刷机后种入最近公告 */
       else app_sync_announcements();
     } else {
       try_reactivate();
     }
-    /* 配网完成宽限：联网且有凭证后 2 分钟关闭热点 */
-    if (!ap_stopped && connected_since_us &&
+    /* 联网后 2 分钟关闭热点（配网完成或离线回退已无需要） */
+    if (ap_started && connected_since_us &&
         esp_timer_get_time() - connected_since_us > PROV_AP_GRACE_MS * 1000LL) {
       app_net_stop_ap();
-      ap_stopped = true;
+      net_prov_set_ap_mode(false);
+      ap_started = false;
+      s_fallback_armed = true;
       ESP_LOGI(TAG, "provisioning ap stopped");
       if (ui_current_screen() == UI_SCR_INFO) back_to_menu();
     }
-    /* I7：±60s 抖动，避免多设备同时上电打同一时刻的同步（惊群）；
-     * 按键（长按同步/进入空列表）可经任务通知提前唤醒 */
-    uint32_t tmo = SYNC_INTERVAL_MS + (esp_random() % 60000);
+    /* I7：±60s 抖动（惊群）；离线 10s 一轮驱动回退检查；已联网但缓存为空时 3s 快速重试 */
+    uint32_t tmo;
+    if (!app_net_is_connected()) {
+      tmo = 10000;
+    } else if (s_count == 0 && app_identity_has_secret()) {
+      tmo = 3000; /* 开机种子慢（节拍+SNTP 等待）会拖长空列表窗口 */
+    } else {
+      tmo = SYNC_INTERVAL_MS + (esp_random() % 60000);
+    }
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(tmo));
   }
 }
@@ -679,15 +719,26 @@ static int cmd_key(int argc, char **argv) {
   return 0;
 }
 
+/* 诊断：公告本地缓存 */
+static int cmd_cache(int argc, char **argv) {
+  (void)argc; (void)argv;
+  printf("cache: %u items, last_read=%d cursor=%d\n", (unsigned)s_count,
+         (int)app_store_get_last_read(), (int)app_store_get_cursor());
+  for (size_t i = 0; i < s_count; i++) {
+    printf("  [%u] id=%ld %s\n", (unsigned)i, s_items[i].id, s_items[i].title);
+  }
+  return 0;
+}
+
 /* 开发/测试用：直接设置 Wi-Fi 凭据（正式用户走配网页） */
 static int cmd_wifi(int argc, char **argv) {
   if (argc < 2) {
     printf("用法: wifi <ssid> [password]\n");
     return 1;
   }
-  esp_err_t err = app_net_start_sta_creds(argv[1], argc > 2 ? argv[2] : "");
-  printf(err == ESP_OK ? "已保存并连接\n" : "失败: %s\n", esp_err_to_name(err));
-  return err == ESP_OK ? 0 : 1;
+  app_wifi_apply(argv[1], argc > 2 ? argv[2] : "");
+  printf("已保存，正在连接\n");
+  return 0;
 }
 
 static void console_init(void) {
@@ -712,6 +763,7 @@ static void console_init(void) {
       { .command = "lvmem", .help = "LVGL 内存池/堆诊断", .func = cmd_lvmem },
       { .command = "key", .help = "key <up|down|ok> [press|click|double|long] — 注入按键", .func = cmd_key },
       { .command = "uitree", .help = "导出 LVGL 当前文本（缺字排查）", .func = cmd_uitree },
+      { .command = "cache", .help = "查看公告本地缓存", .func = cmd_cache },
   };
   for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
     esp_console_cmd_register(&cmds[i]);

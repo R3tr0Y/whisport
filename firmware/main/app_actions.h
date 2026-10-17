@@ -26,6 +26,9 @@ int app_sync_announcements(void);
 /* 云服务地址（配网页展示） */
 const char *app_server_url(void);
 
+/* 应用新 Wi-Fi 凭据：AP 模式下必须先关热点再连（信道冲突会导致关联失败） */
+void app_wifi_apply(const char *ssid, const char *pass);
+
 /* 本地缓存的显示名（配网页展示）；无则返回 false */
 bool app_get_label(char *buf, size_t len);
 

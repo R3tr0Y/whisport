@@ -208,7 +208,18 @@ def main():
             run_portal_checks(dev)
 
         print("== 7. UI 导航与屏保（key 注入）==")
-        dev.buf = ""
+        # 等公告缓存就绪（开机种子含 SNTP 等待，最坏 ~30s；轮询 cache 命令确认）
+        for _ in range(12):
+            dev.buf = ""
+            dev.send("cache")
+            out = dev.read(2.0)
+            m = re.search(r"cache: (\d+) items", out)
+            if m and int(m.group(1)) > 0:
+                print(f"    缓存就绪: {m.group(1)} 条")
+                break
+            time.sleep(1.5)
+        else:
+            print("    (缓存 30s 未就绪，继续)")
 
         def uitree():
             dev.buf = ""

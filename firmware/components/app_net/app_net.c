@@ -10,6 +10,7 @@
 #include "esp_log.h"
 #include "esp_netif_sntp.h"
 #include "esp_random.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
@@ -25,17 +26,47 @@ static bool s_sntp_started = false;
 static bool s_ap_active = false;
 static esp_netif_t *s_sta_netif = NULL;
 
+/* 重连策略（审计 I7 + 离线重配可靠性）：
+ * - 重配置期间挂起自动重连（否则连接循环会让 set_config 一直失败）
+ * - 前 5 次快速重试，之后 30s 退避一次（错误密码不再刷屏重连） */
+static volatile bool s_reconfiguring = false;
+static int s_fail_count = 0;
+static esp_timer_handle_t s_retry_timer = NULL;
+
+static void retry_connect_cb(void *arg) {
+  (void)arg;
+  if (!s_connected) esp_wifi_connect();
+}
+
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
   if (base == WIFI_EVENT) {
     switch (id) {
       case WIFI_EVENT_STA_START:
         esp_wifi_connect();
         break;
-      case WIFI_EVENT_STA_DISCONNECTED:
-        s_connected = false;
-        ESP_LOGW(TAG, "disconnected, reconnecting");
-        esp_wifi_connect();
+      case WIFI_EVENT_STA_CONNECTED:
+        s_fail_count = 0;
         break;
+      case WIFI_EVENT_STA_DISCONNECTED: {
+        s_connected = false;
+        if (s_reconfiguring) break; /* 正在换配置，交给配置流程 */
+        if (s_fail_count < 5) {
+          s_fail_count++;
+          esp_wifi_connect();
+        } else {
+          if (!s_retry_timer) {
+            const esp_timer_create_args_t targs = {
+              .callback = retry_connect_cb,
+              .name = "wifiretry",
+            };
+            esp_timer_create(&targs, &s_retry_timer);
+          }
+          esp_timer_stop(s_retry_timer);
+          esp_timer_start_once(s_retry_timer, 30LL * 1000 * 1000);
+          ESP_LOGW(TAG, "reconnect backoff 30s (fail #%d)", s_fail_count);
+        }
+        break;
+      }
       default:
         break;
     }
@@ -43,12 +74,24 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
     ip_event_got_ip_t *evt = (ip_event_got_ip_t *)data;
     ESP_LOGI(TAG, "got ip " IPSTR, IP2STR(&evt->ip_info.ip));
     s_connected = true;
+    if (s_retry_timer) esp_timer_stop(s_retry_timer); /* 已连接：取消待发的重试 */
     if (!s_sntp_started) {
-      /* 首次拿到 IP 后启动 SNTP：HMAC 签名时间戳依赖系统时钟（云端 ±120s 窗口） */
-      esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("ntp.aliyun.com");
+      /* 首次拿到 IP 后启动 SNTP：HMAC 签名时间戳依赖系统时钟（云端 ±120s 窗口）。
+       * 多服务器：单点 NTP 慢会拖长开机种子（种子前需等待对时） */
+      esp_sntp_config_t cfg = {
+          .smooth_sync = false,
+          .server_from_dhcp = false,
+          .wait_for_sync = true,
+          .start = true,
+          .renew_servers_after_new_IP = false,
+          .ip_event_to_renew = IP_EVENT_STA_GOT_IP,
+          .index_of_first_server = 0,
+          .servers = { "ntp.aliyun.com", "cn.pool.ntp.org", "time.windows.com" },
+          .num_of_servers = 3,
+      };
       if (esp_netif_sntp_init(&cfg) == ESP_OK) {
         s_sntp_started = true;
-        ESP_LOGI(TAG, "sntp started");
+        ESP_LOGI(TAG, "sntp started (3 servers)");
       } else {
         ESP_LOGW(TAG, "sntp init failed");
       }
@@ -116,17 +159,25 @@ esp_err_t app_net_start_sta(void) {
 esp_err_t app_net_start_sta_creds(const char *ssid, const char *pass) {
   ESP_RETURN_ON_ERROR(app_store_set_wifi(ssid, pass ? pass : ""), TAG, "save wifi");
 
+  /* 挂起自动重连：连接循环中 set_config 会一直失败（"sta is connecting"） */
+  s_reconfiguring = true;
   esp_wifi_disconnect();
   vTaskDelay(pdMS_TO_TICKS(150));
 
   wifi_mode_t mode = s_ap_active ? WIFI_MODE_APSTA : WIFI_MODE_STA;
-  esp_err_t err = esp_wifi_set_mode(mode);
-  if (err != ESP_OK) return err;
-  err = apply_sta_config(ssid, pass);
+  esp_err_t err = ESP_OK;
+  for (int i = 0; i < 3; i++) { /* 顶过驱动过渡态，重试 3 次 */
+    err = esp_wifi_set_mode(mode);
+    if (err == ESP_OK) err = apply_sta_config(ssid, pass);
+    if (err == ESP_OK) break;
+    vTaskDelay(pdMS_TO_TICKS(200));
+  }
+  s_reconfiguring = false;
   if (err != ESP_OK) return err;
 
   esp_wifi_start(); /* 已在运行属正常路径 */
   xEventGroupClearBits(s_events, GOT_IP_BIT);
+  s_fail_count = 0;
   esp_wifi_connect();
   ESP_LOGI(TAG, "sta reconfigured -> \"%s\"", ssid);
   return ESP_OK;

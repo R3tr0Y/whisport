@@ -199,9 +199,15 @@ static esp_err_t h_wifi(httpd_req_t *req) {
     cJSON_Delete(o);
     return reply_ok(req, false, "ssid required"), ESP_OK;
   }
-  esp_err_t err = app_net_start_sta_creds(ssid, pass);
+  char ssid_copy[33], pass_copy[65];
+  strlcpy(ssid_copy, ssid, sizeof(ssid_copy));
+  strlcpy(pass_copy, pass, sizeof(pass_copy));
   cJSON_Delete(o);
-  return reply_ok(req, err == ESP_OK, esp_err_to_name(err)), ESP_OK;
+  /* 先回响应再切换：AP 模式下应用新凭据会关热点，手机会断开（页面已提示稍后查看） */
+  reply_ok(req, true, NULL);
+  vTaskDelay(pdMS_TO_TICKS(800));
+  app_wifi_apply(ssid_copy, pass_copy);
+  return ESP_OK;
 }
 
 static esp_err_t h_name(httpd_req_t *req) {
